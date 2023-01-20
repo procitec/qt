@@ -7,7 +7,8 @@ HEADERS += \
     thread/qthread.h \
     thread/qthreadstorage.h \
     thread/qwaitcondition_p.h \
-    thread/qwaitcondition.h
+    thread/qwaitcondition.h \
+    thread/qtsan_impl.h
 
 SOURCES += \
     thread/qrunnable.cpp \
