@@ -50,7 +50,7 @@ Event::Event(scoped_refptr<base::RefCountedMemory> event_bytes,
     if ((xcb_event->response_type & ~kSendEventMask) ==
         x11::GeGenericEvent::opcode) {
       auto* ge = reinterpret_cast<xcb_ge_event_t*>(xcb_event);
-      constexpr size_t ge_length = sizeof(xcb_raw_generic_event_t);
+      constexpr size_t ge_length = sizeof(xcb_generic_event_t) - sizeof(uint32_t);
       constexpr size_t offset = sizeof(ge->full_sequence);
       size_t extended_length = ge->length * 4;
       if (extended_length < ge_length) {
