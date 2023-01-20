@@ -37,6 +37,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qelfparser_p.h"
 
 #if defined (Q_OF_ELF) && defined(Q_CC_GNU)

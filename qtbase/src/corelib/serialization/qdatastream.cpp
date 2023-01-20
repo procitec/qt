@@ -40,6 +40,8 @@
 #include "qdatastream.h"
 #include "qdatastream_p.h"
 
+#include <limits>
+
 #if !defined(QT_NO_DATASTREAM) || defined(QT_BOOTSTRAPPED)
 #include "qbuffer.h"
 #include "qfloat16.h"

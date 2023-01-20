@@ -40,6 +40,7 @@
 // for rand_s
 #define _CRT_RAND_S
 
+#include <limits>
 #include "qrandom.h"
 #include "qrandom_p.h"
 #include <qobjectdefs.h>

@@ -38,6 +38,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qendian.h"
 
 #include "qalgorithms.h"

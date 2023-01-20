@@ -38,6 +38,8 @@
 **
 ****************************************************************************/
 
+#include <limits>
+
 #include "qutfcodec_p.h"
 #include "qlist.h"
 #include "qendian.h"

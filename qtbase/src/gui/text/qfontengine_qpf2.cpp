@@ -37,6 +37,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qfontengine_qpf2_p.h"
 
 #include <QtCore/QFile>

@@ -38,6 +38,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qbitarray.h"
 #include <qalgorithms.h>
 #include <qdatastream.h>

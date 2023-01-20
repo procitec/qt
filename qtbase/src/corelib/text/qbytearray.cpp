@@ -39,6 +39,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qbytearray.h"
 #include "qbytearraymatcher.h"
 #include "private/qtools_p.h"

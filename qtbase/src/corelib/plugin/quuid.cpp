@@ -38,6 +38,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "quuid.h"
 
 #include "qcryptographichash.h"

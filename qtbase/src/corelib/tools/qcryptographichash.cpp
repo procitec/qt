@@ -38,6 +38,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include <qcryptographichash.h>
 #include <qiodevice.h>
 

@@ -38,6 +38,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qfloat16.h"
 #include "private/qsimd_p.h"
 #include <cmath> // for fpclassify()'s return values

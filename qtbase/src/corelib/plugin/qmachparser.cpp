@@ -37,6 +37,8 @@
 **
 ****************************************************************************/
 
+#include <limits>
+
 #include "qmachparser_p.h"
 
 #if defined(Q_OF_MACH_O)

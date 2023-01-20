@@ -37,6 +37,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qbytearraymatcher.h"
 
 #include <limits.h>

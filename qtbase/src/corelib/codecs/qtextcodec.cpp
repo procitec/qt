@@ -38,6 +38,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qplatformdefs.h"
 
 #include "qtextcodec.h"
