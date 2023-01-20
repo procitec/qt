@@ -3116,8 +3116,8 @@ static QSvgNode *createRectNode(QSvgNode *parent,
     //we draw rounded rect from 0...99
     //svg from 0...bounds.width()/2 so we're adjusting the
     //coordinates
-    nrx *= (100/(bounds.width()/2));
-    nry *= (100/(bounds.height()/2));
+    if(bounds.width()) nrx *= (100/(bounds.width()/2));
+    if(bounds.height()) nry *= (100/(bounds.height()/2));
 
     QSvgNode *rect = new QSvgRect(parent, bounds,
                                   int(nrx),
