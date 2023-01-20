@@ -69,11 +69,11 @@ if ($fname eq "--zstd") {
 my $cmd;
 if (checkCommand("xmlstarlet")) {
     # Minify the data before compressing
-    $cmd = "xmlstarlet sel -D -B -t -c / $fname";
+    $cmd = "MSYS_NO_PATHCONV=1 xmlstarlet sel -D -B -t -c / $fname";
     $cmd .= "| $compress" if $compress;
 } elsif (checkCommand("xml")) {
     # Minify the data before compressing
-    $cmd = "xml sel -D -B -t -c / $fname";
+    $cmd = "MSYS_NO_PATHCONV=1 xml sel -D -B -t -c / $fname";
     $cmd .= "| $compress" if $compress;
 } elsif ($compress) {
     $cmd = "$compress < $fname"
