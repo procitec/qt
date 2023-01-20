@@ -40,6 +40,8 @@
 #ifndef QQMLPROFILEREVENT_P_H
 #define QQMLPROFILEREVENT_P_H
 
+#include <limits>
+
 #include "qqmlprofilerclientdefinitions_p.h"
 
 #include <QtCore/qstring.h>

@@ -37,6 +37,7 @@
 **
 ****************************************************************************/
 
+#include <limits>
 #include "qv4regexp_p.h"
 #include "qv4engine_p.h"
 #include "qv4scopedvalue_p.h"
