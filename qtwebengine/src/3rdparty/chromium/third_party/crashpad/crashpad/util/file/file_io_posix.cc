@@ -14,6 +14,10 @@
 
 #include "util/file/file_io.h"
 
+#if defined(OS_POSIX) && !defined(O_TMPFILE)
+#define O_TMPFILE 020200000
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/file.h>
