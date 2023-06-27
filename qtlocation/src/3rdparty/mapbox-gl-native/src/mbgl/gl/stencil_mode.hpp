@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mbgl/util/variant.hpp>
+#include <cstdint>
 
 namespace mbgl {
 namespace gl {
