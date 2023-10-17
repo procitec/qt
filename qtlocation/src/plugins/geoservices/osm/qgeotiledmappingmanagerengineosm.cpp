@@ -96,51 +96,6 @@ QGeoTiledMappingManagerEngineOsm::QGeoTiledMappingManagerEngineOsm(const QVarian
     providers_nighttransit.push_back(new TileProvider(QString(domain + "night-transit"_L1)));
     providers_terrain.push_back(new TileProvider(QString(domain + "terrain"_L1)));
     providers_hiking.push_back(new TileProvider(QString(domain + "hiking"_L1)));
-    // Backups
-    const QDateTime defaultTs = QDateTime::fromString(QStringLiteral("2016-06-01T00:00:00"), Qt::ISODate);
-    providers_street.push_back(
-        new TileProvider(QStringLiteral("http://c.tile.openstreetmap.org/%z/%x/%y.png"),
-            QStringLiteral("png"),
-            QStringLiteral("<a href='http://www.openstreetmap.org/copyright'>OpenStreetMap.org</a>"),
-            QStringLiteral("<a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors")));
-    providers_street.back()->setTimestamp(defaultTs);
-
-    // No available open access satellite backup with satisfactory level of details at the present.
-
-    providers_cycle.push_back(
-        new TileProvider(QStringLiteral("http://c.tile.opencyclemap.org/cycle/%z/%x/%y.png"),
-            QStringLiteral("png"),
-            QStringLiteral("<a href='http://www.thunderforest.com/'>Thunderforest</a>"),
-            QStringLiteral("<a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors")));
-    providers_cycle.back()->setTimestamp(defaultTs);
-
-    providers_transit.push_back(
-        new TileProvider(QStringLiteral("http://c.tile2.opencyclemap.org/transport/%z/%x/%y.png"),
-            QStringLiteral("png"),
-            QStringLiteral("<a href='http://www.thunderforest.com/'>Thunderforest</a>"),
-            QStringLiteral("<a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors")));
-    providers_transit.back()->setTimestamp(defaultTs);
-
-    providers_nighttransit.push_back(
-        new TileProvider(QStringLiteral("http://a.tile.thunderforest.com/transport-dark/%z/%x/%y.png"),
-            QStringLiteral("png"),
-            QStringLiteral("<a href='http://www.thunderforest.com/'>Thunderforest</a>"),
-            QStringLiteral("<a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors")) );
-    providers_nighttransit.back()->setTimestamp(defaultTs);
-
-    providers_terrain.push_back(
-        new TileProvider(QStringLiteral("http://a.tile.thunderforest.com/landscape/%z/%x/%y.png"),
-            QStringLiteral("png"),
-            QStringLiteral("<a href='http://www.thunderforest.com/'>Thunderforest</a>"),
-            QStringLiteral("<a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors")));
-    providers_terrain.back()->setTimestamp(defaultTs);
-
-    providers_hiking.push_back(
-        new TileProvider(QStringLiteral("http://a.tile.thunderforest.com/outdoors/%z/%x/%y.png"),
-            QStringLiteral("png"),
-            QStringLiteral("<a href='http://www.thunderforest.com/'>Thunderforest</a>"),
-            QStringLiteral("<a href='http://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors")));
-    providers_hiking.back()->setTimestamp(defaultTs);
 
 
     /* QGeoTileProviderOsms setup */
