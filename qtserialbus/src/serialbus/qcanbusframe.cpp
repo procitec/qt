@@ -1,44 +1,13 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: http://www.qt.io/licensing/
-**
-** This file is part of the QtSerialBus module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL3$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see http://www.qt.io/terms-conditions. For further
-** information use the contact form at http://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPLv3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or later as published by the Free
-** Software Foundation and appearing in the file LICENSE.GPL included in
-** the packaging of this file. Please review the following information to
-** ensure the GNU General Public License version 2.0 requirements will be
-** met: http://www.gnu.org/licenses/gpl-2.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qcanbusframe.h"
 
 #include <QtCore/qdatastream.h>
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 /*!
     \class QCanBusFrame
@@ -60,7 +29,7 @@ QT_BEGIN_NAMESPACE
 */
 
 /*!
-    \fn QCanBusFrame::QCanBusFrame(quint32 identifier, const QByteArray &data)
+    \fn QCanBusFrame::QCanBusFrame(QCanBusFrame::FrameId identifier, const QByteArray &data)
 
     Constructs a CAN frame using \a identifier as the frame identifier and \a data as the payload.
 */
@@ -78,7 +47,7 @@ QT_BEGIN_NAMESPACE
 */
 
 /*!
-    \fn QCanBusFrame::setFrameId(quint32 newFrameId)
+    \fn QCanBusFrame::setFrameId(QCanBusFrame::FrameId newFrameId)
 
     Sets the identifier of the CAN frame to \a newFrameId.
 
@@ -102,7 +71,7 @@ QT_BEGIN_NAMESPACE
     enabled on the \l QCanBusDevice by setting the \l QCanBusDevice::CanFdKey.
 
     Frames of type \l RemoteRequestFrame (RTR) do not have a payload. However they have to
-    provide an indication of the responses expected payload length. To set the length expection it
+    provide an indication of the responses expected payload length. To set the expected length it
     is necessary to set a fake payload whose length matches the expected payload length of the
     response. One way of doing this might be as follows:
 
@@ -125,7 +94,7 @@ QT_BEGIN_NAMESPACE
 */
 
 /*!
-    \fn quint32 QCanBusFrame::frameId() const
+    \fn QCanBusFrame::FrameId QCanBusFrame::frameId() const
 
     Returns the CAN frame identifier. If the CAN frame uses the
     extended frame format, the identifier has a maximum of 29 bits;
@@ -421,17 +390,22 @@ QString QCanBusFrame::toString() const
         break;
     }
 
-    const char * const idFormat = hasExtendedFrameFormat() ? "%08X" : "     %03X";
-    const char * const dlcFormat = hasFlexibleDataRateFormat() ? "  [%02d]" : "   [%d]";
     QString result;
-    result.append(QString::asprintf(idFormat, static_cast<uint>(frameId())));
-    result.append(QString::asprintf(dlcFormat, payload().size()));
+    result.append(hasExtendedFrameFormat() ? u""_s : u"     "_s);
+    result.append(u"%1"_s.arg(static_cast<uint>(frameId()),
+                               hasExtendedFrameFormat() ? 8 : 3,
+                               16, QLatin1Char('0')).toUpper());
+
+    result.append(hasFlexibleDataRateFormat() ? u"  "_s : u"   "_s);
+    result.append(u"[%1]"_s.arg(payload().size(),
+                               hasFlexibleDataRateFormat() ? 2 : 0,
+                               10, QLatin1Char('0')));
 
     if (type == RemoteRequestFrame) {
-        result.append(QLatin1String("  Remote Request"));
+        result.append(u"  Remote Request"_s);
     } else if (!payload().isEmpty()) {
         const QByteArray data = payload().toHex(' ').toUpper();
-        result.append(QLatin1String("  "));
+        result.append(u"  "_s);
         result.append(QLatin1String(data));
     }
 
@@ -443,7 +417,7 @@ QString QCanBusFrame::toString() const
 /*! \relates QCanBusFrame
 
     Writes a \a frame to the stream (\a out) and returns a reference
-    to the it.
+    to it.
 */
 QDataStream &operator<<(QDataStream &out, const QCanBusFrame &frame)
 {
@@ -466,11 +440,11 @@ QDataStream &operator<<(QDataStream &out, const QCanBusFrame &frame)
 /*! \relates QCanBusFrame
 
     Reads a \a frame from the stream (\a in) and returns a
-    reference to the it.
+    reference to it.
 */
 QDataStream &operator>>(QDataStream &in, QCanBusFrame &frame)
 {
-    quint32 frameId;
+    QCanBusFrame::FrameId frameId;
     quint8 frameType;
     quint8 version;
     bool extendedFrameFormat;

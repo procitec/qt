@@ -1,11 +1,12 @@
-[microFocusCoordinates]
-osx
+[mixLangLocale:eu_ES]
+*
 
-[visibilityState3]
+[navigateOnDrop:file]
+windows
+
+[navigateOnDrop:file_no_navigate]
 windows
 
 [horizontalScrollbarTest]
-osx
-
-[mixLangLocale:eu_ES]
-*
+macos
+rhel # flaky

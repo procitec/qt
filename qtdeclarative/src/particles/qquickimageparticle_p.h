@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQuick module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQUICKIMAGEPARTICLE_P_H
 #define QQUICKIMAGEPARTICLE_P_H
@@ -69,7 +33,7 @@ class QQuickStochasticEngine;
 
 class QRhi;
 
-struct SimpleVertex {
+struct SimplePointVertex {
     float x;
     float y;
     float t;
@@ -82,6 +46,21 @@ struct SimpleVertex {
     float ay;
 };
 
+struct ColoredPointVertex {
+    float x;
+    float y;
+    float t;
+    float lifeSpan;
+    float size;
+    float endSize;
+    float vx;
+    float vy;
+    float ax;
+    float ay;
+    Color4ub color;
+};
+
+// Like Colored, but using DrawTriangles instead of DrawPoints
 struct ColoredVertex {
     float x;
     float y;
@@ -94,13 +73,16 @@ struct ColoredVertex {
     float ax;
     float ay;
     Color4ub color;
+    uchar tx;
+    uchar ty;
+    uchar _padding[2]; // feel free to use
 };
 
 struct DeformableVertex {
     float x;
     float y;
-    float tx;
-    float ty;
+    float rotation;
+    float rotationVelocity;
     float t;
     float lifeSpan;
     float size;
@@ -114,16 +96,17 @@ struct DeformableVertex {
     float xy;
     float yx;
     float yy;
-    float rotation;
-    float rotationVelocity;
-    float autoRotate;//Assumed that GPUs prefer floats to bools
+    uchar tx;
+    uchar ty;
+    uchar autoRotate;
+    uchar _padding; // feel free to use
 };
 
 struct SpriteVertex {
     float x;
     float y;
-    float tx;
-    float ty;
+    float rotation;
+    float rotationVelocity;
     float t;
     float lifeSpan;
     float size;
@@ -137,16 +120,16 @@ struct SpriteVertex {
     float xy;
     float yx;
     float yy;
-    float rotation;
-    float rotationVelocity;
-    float autoRotate;//Assumed that GPUs prefer floats to bools
+    uchar tx;
+    uchar ty;
+    uchar autoRotate;
+    uchar _padding; // feel free to use
     float animW;
     float animH;
     float animProgress;
     float animX1;
     float animY1;
     float animX2;
-    float animY2;
 };
 
 template <typename Vertex>
@@ -163,48 +146,49 @@ public:
     virtual ImageMaterialData *state() = 0;
 };
 
-class QQuickImageParticle : public QQuickParticlePainter
+class Q_QUICKPARTICLES_PRIVATE_EXPORT QQuickImageParticle : public QQuickParticlePainter
 {
     Q_OBJECT
-    Q_PROPERTY(QUrl source READ image WRITE setImage NOTIFY imageChanged)
-    Q_PROPERTY(QQmlListProperty<QQuickSprite> sprites READ sprites)
-    Q_PROPERTY(Status status READ status NOTIFY statusChanged)
+    Q_PROPERTY(QUrl source READ image WRITE setImage NOTIFY imageChanged FINAL)
+    Q_PROPERTY(QQmlListProperty<QQuickSprite> sprites READ sprites FINAL)
+    Q_PROPERTY(Status status READ status NOTIFY statusChanged FINAL)
     //### Is it worth having progress like Image has?
     //Q_PROPERTY(qreal progress READ progress NOTIFY progressChanged)
 
-    Q_PROPERTY(QUrl colorTable READ colortable WRITE setColortable NOTIFY colortableChanged)
-    Q_PROPERTY(QUrl sizeTable READ sizetable WRITE setSizetable NOTIFY sizetableChanged)
-    Q_PROPERTY(QUrl opacityTable READ opacitytable WRITE setOpacitytable NOTIFY opacitytableChanged)
+    Q_PROPERTY(QUrl colorTable READ colortable WRITE setColortable NOTIFY colortableChanged FINAL)
+    Q_PROPERTY(QUrl sizeTable READ sizetable WRITE setSizetable NOTIFY sizetableChanged FINAL)
+    Q_PROPERTY(QUrl opacityTable READ opacitytable WRITE setOpacitytable NOTIFY opacitytableChanged FINAL)
 
     //###Now just colorize - add a flag for 'solid' color particles(where the img is just a mask?)?
-    Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY colorChanged RESET resetColor)
+    Q_PROPERTY(QColor color READ color WRITE setColor NOTIFY colorChanged RESET resetColor FINAL)
     //Stacks (added) with individual colorVariations
-    Q_PROPERTY(qreal colorVariation READ colorVariation WRITE setColorVariation NOTIFY colorVariationChanged RESET resetColor)
-    Q_PROPERTY(qreal redVariation READ redVariation WRITE setRedVariation NOTIFY redVariationChanged RESET resetColor)
-    Q_PROPERTY(qreal greenVariation READ greenVariation WRITE setGreenVariation NOTIFY greenVariationChanged RESET resetColor)
-    Q_PROPERTY(qreal blueVariation READ blueVariation WRITE setBlueVariation NOTIFY blueVariationChanged RESET resetColor)
+    Q_PROPERTY(qreal colorVariation READ colorVariation WRITE setColorVariation NOTIFY colorVariationChanged RESET resetColor FINAL)
+    Q_PROPERTY(qreal redVariation READ redVariation WRITE setRedVariation NOTIFY redVariationChanged RESET resetColor FINAL)
+    Q_PROPERTY(qreal greenVariation READ greenVariation WRITE setGreenVariation NOTIFY greenVariationChanged RESET resetColor FINAL)
+    Q_PROPERTY(qreal blueVariation READ blueVariation WRITE setBlueVariation NOTIFY blueVariationChanged RESET resetColor FINAL)
     //Stacks (multiplies) with the Alpha in the color, mostly here so you can use svg color names (which have full alpha)
-    Q_PROPERTY(qreal alpha READ alpha WRITE setAlpha NOTIFY alphaChanged RESET resetColor)
-    Q_PROPERTY(qreal alphaVariation READ alphaVariation WRITE setAlphaVariation NOTIFY alphaVariationChanged RESET resetColor)
+    Q_PROPERTY(qreal alpha READ alpha WRITE setAlpha NOTIFY alphaChanged RESET resetColor FINAL)
+    Q_PROPERTY(qreal alphaVariation READ alphaVariation WRITE setAlphaVariation NOTIFY alphaVariationChanged RESET resetColor FINAL)
 
     Q_PROPERTY(qreal rotation READ rotation WRITE setRotation NOTIFY rotationChanged RESET resetRotation)
-    Q_PROPERTY(qreal rotationVariation READ rotationVariation WRITE setRotationVariation NOTIFY rotationVariationChanged RESET resetRotation)
-    Q_PROPERTY(qreal rotationVelocity READ rotationVelocity WRITE setRotationVelocity NOTIFY rotationVelocityChanged RESET resetRotation)
-    Q_PROPERTY(qreal rotationVelocityVariation READ rotationVelocityVariation WRITE setRotationVelocityVariation NOTIFY rotationVelocityVariationChanged RESET resetRotation)
+    Q_PROPERTY(qreal rotationVariation READ rotationVariation WRITE setRotationVariation NOTIFY rotationVariationChanged RESET resetRotation FINAL)
+    Q_PROPERTY(qreal rotationVelocity READ rotationVelocity WRITE setRotationVelocity NOTIFY rotationVelocityChanged RESET resetRotation FINAL)
+    Q_PROPERTY(qreal rotationVelocityVariation READ rotationVelocityVariation WRITE setRotationVelocityVariation NOTIFY rotationVelocityVariationChanged RESET resetRotation FINAL)
     //If true, then will face the direction of motion. Stacks with rotation, e.g. setting rotation
     //to 180 will lead to facing away from the direction of motion
-    Q_PROPERTY(bool autoRotation READ autoRotation WRITE setAutoRotation NOTIFY autoRotationChanged RESET resetRotation)
+    Q_PROPERTY(bool autoRotation READ autoRotation WRITE setAutoRotation NOTIFY autoRotationChanged RESET resetRotation FINAL)
 
     //xVector is the vector from the top-left point to the top-right point, and is multiplied by current size
-    Q_PROPERTY(QQuickDirection* xVector READ xVector WRITE setXVector NOTIFY xVectorChanged RESET resetDeformation)
+    Q_PROPERTY(QQuickDirection* xVector READ xVector WRITE setXVector NOTIFY xVectorChanged RESET resetDeformation FINAL)
     //yVector is the same, but top-left to bottom-left. The particle is always a parallelogram.
-    Q_PROPERTY(QQuickDirection* yVector READ yVector WRITE setYVector NOTIFY yVectorChanged RESET resetDeformation)
-    Q_PROPERTY(bool spritesInterpolate READ spritesInterpolate WRITE setSpritesInterpolate NOTIFY spritesInterpolateChanged)
+    Q_PROPERTY(QQuickDirection* yVector READ yVector WRITE setYVector NOTIFY yVectorChanged RESET resetDeformation FINAL)
+    Q_PROPERTY(bool spritesInterpolate READ spritesInterpolate WRITE setSpritesInterpolate NOTIFY spritesInterpolateChanged FINAL)
 
-    Q_PROPERTY(EntryEffect entryEffect READ entryEffect WRITE setEntryEffect NOTIFY entryEffectChanged)
+    Q_PROPERTY(EntryEffect entryEffect READ entryEffect WRITE setEntryEffect NOTIFY entryEffectChanged FINAL)
     QML_NAMED_ELEMENT(ImageParticle)
+    QML_ADDED_IN_VERSION(2, 0)
 public:
-    explicit QQuickImageParticle(QQuickItem *parent = 0);
+    explicit QQuickImageParticle(QQuickItem *parent = nullptr);
     virtual ~QQuickImageParticle();
 
     enum Status { Null, Ready, Loading, Error };
@@ -222,7 +206,8 @@ public:
 
     enum PerformanceLevel{//TODO: Expose?
         Unknown = 0,
-        Simple,
+        SimplePoint,
+        ColoredPoint,
         Colored,
         Deformable,
         Tabled,
@@ -326,7 +311,6 @@ Q_SIGNALS:
     void statusChanged(Status arg);
 
 public Q_SLOTS:
-    void reloadColor(const Color4ub &c, QQuickParticleData* d);
     void setAlphaVariation(qreal arg);
 
     void setAlpha(qreal arg);
@@ -375,6 +359,8 @@ private Q_SLOTS:
     void spritesUpdate(qreal time = 0 );
     void mainThreadFetchImageData();
     void finishBuildParticleNodes(QSGNode **n);
+    void invalidateSceneGraph();
+
 private:
     struct ImageData {
         QUrl source;
@@ -427,25 +413,27 @@ private:
 
     bool m_bypassOptimizations;
     PerformanceLevel perfLevel;
+    PerformanceLevel m_targetPerfLevel;
+    void checkPerfLevel(PerformanceLevel level);
 
-    PerformanceLevel m_lastLevel;
     bool m_debugMode;
 
     template<class Vertex>
     void initTexCoords(Vertex* v, int count){
         Vertex* end = v + count;
+        // Vertex coords between (0.0, 0.0) and (1.0, 1.0)
         while (v < end){
             v[0].tx = 0;
             v[0].ty = 0;
 
-            v[1].tx = 1;
+            v[1].tx = 255;
             v[1].ty = 0;
 
             v[2].tx = 0;
-            v[2].ty = 1;
+            v[2].ty = 255;
 
-            v[3].tx = 1;
-            v[3].ty = 1;
+            v[3].tx = 255;
+            v[3].ty = 255;
 
             v += 4;
         }
@@ -460,6 +448,7 @@ private:
     int m_startedImageLoading;
     QRhi *m_rhi;
     bool m_apiChecked;
+    qreal m_dpr;
     bool m_previousActive;
 };
 

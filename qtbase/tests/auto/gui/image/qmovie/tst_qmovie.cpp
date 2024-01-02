@@ -1,40 +1,18 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 
-#include <QtTest/QtTest>
-
+#include <QTest>
+#include <QTestEventLoop>
+#include <QSignalSpy>
+#include <QtTest/private/qpropertytesthelper_p.h>
 
 #include <QIODevice>
 #ifndef QT_NO_WIDGETS
 #include <QLabel>
 #endif
 #include <QMovie>
+#include <QProperty>
 
 class tst_QMovie : public QObject
 {
@@ -63,6 +41,8 @@ private slots:
     void infiniteLoop();
 #endif
     void emptyMovie();
+    void bindings();
+    void automatedBindings();
 };
 
 // Testing get/set functions
@@ -178,7 +158,7 @@ void tst_QMovie::playMovie()
     movie.start();
     QCOMPARE(movie.state(), QMovie::Running);
     QTestEventLoop::instance().enterLoop(2);
-    QCOMPARE(finishedSpy.count(), 0);
+    QCOMPARE(finishedSpy.size(), 0);
     QCOMPARE(movie.state(), QMovie::Running);
     QCOMPARE(movie.currentFrameNumber(), 0);
 }
@@ -227,6 +207,56 @@ void tst_QMovie::emptyMovie()
     movie.setCacheMode(QMovie::CacheAll);
     movie.jumpToFrame(100);
     QCOMPARE(movie.currentFrameNumber(), -1);
+}
+
+void tst_QMovie::bindings()
+{
+    QMovie movie;
+
+    // speed property
+    QCOMPARE(movie.speed(), 100);
+    QProperty<int> speed;
+    movie.bindableSpeed().setBinding(Qt::makePropertyBinding(speed));
+    speed = 50;
+    QCOMPARE(movie.speed(), 50);
+
+    QProperty<int> speedObserver;
+    speedObserver.setBinding([&] { return movie.speed(); });
+    movie.setSpeed(75);
+    QCOMPARE(speedObserver, 75);
+
+    // chacheMode property
+    QCOMPARE(movie.cacheMode(), QMovie::CacheNone);
+    QProperty<QMovie::CacheMode> cacheMode;
+    movie.bindableCacheMode().setBinding(Qt::makePropertyBinding(cacheMode));
+    cacheMode = QMovie::CacheAll;
+    QCOMPARE(movie.cacheMode(), QMovie::CacheAll);
+
+    movie.setCacheMode(QMovie::CacheNone);
+
+    QProperty<QMovie::CacheMode> cacheModeObserver;
+    QCOMPARE(cacheModeObserver, QMovie::CacheNone);
+    cacheModeObserver.setBinding([&] { return movie.cacheMode(); });
+    movie.setCacheMode(QMovie::CacheAll);
+    QCOMPARE(cacheModeObserver, QMovie::CacheAll);
+}
+
+void tst_QMovie::automatedBindings()
+{
+    QMovie movie;
+
+    QTestPrivate::testReadWritePropertyBasics(movie, 50, 100, "speed");
+    if (QTest::currentTestFailed()) {
+        qDebug("Failed property test for QMovie::speed");
+        return;
+    }
+
+    QTestPrivate::testReadWritePropertyBasics(movie, QMovie::CacheAll, QMovie::CacheNone,
+                                              "cacheMode");
+    if (QTest::currentTestFailed()) {
+        qDebug("Failed property test for QMovie::cacheMode");
+        return;
+    }
 }
 
 QTEST_MAIN(tst_QMovie)

@@ -1,46 +1,12 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtGui module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qktxhandler_p.h"
 #include "qtexturefiledata_p.h"
 #include <QtEndian>
 #include <QSize>
+#include <QMap>
+#include <QtCore/qiodevice.h>
 
 //#define KTX_DEBUG
 #ifdef KTX_DEBUG
@@ -50,6 +16,8 @@
 #endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 #define KTX_IDENTIFIER_LENGTH 12
 static const char ktxIdentifier[KTX_IDENTIFIER_LENGTH] = { '\xAB', 'K', 'T', 'X', ' ', '1', '1', '\xBB', '\r', '\n', '\x1A', '\n' };
@@ -73,7 +41,7 @@ struct KTXHeader {
     quint32 bytesOfKeyValueData;
 };
 
-static const quint32 headerSize = sizeof(KTXHeader);
+static const quint32 qktxh_headerSize = sizeof(KTXHeader);
 
 // Currently unused, declared for future reference
 struct KTXKeyValuePairItem {
@@ -103,9 +71,18 @@ struct KTXMipmapLevel {
     */
 };
 
+// Returns the nearest multiple of 'rounding' greater than or equal to 'value'
+constexpr quint32 withPadding(quint32 value, quint32 rounding)
+{
+    Q_ASSERT(rounding > 1);
+    return value + (rounding - 1) - ((value + (rounding - 1)) % rounding);
+}
+
+QKtxHandler::~QKtxHandler() = default;
+
 bool QKtxHandler::canRead(const QByteArray &suffix, const QByteArray &block)
 {
-    Q_UNUSED(suffix)
+    Q_UNUSED(suffix);
 
     return (qstrncmp(block.constData(), ktxIdentifier, KTX_IDENTIFIER_LENGTH) == 0);
 }
@@ -115,14 +92,14 @@ QTextureFileData QKtxHandler::read()
     if (!device())
         return QTextureFileData();
 
-    QByteArray buf = device()->readAll();
+    const QByteArray buf = device()->readAll();
     const quint32 dataSize = quint32(buf.size());
-    if (dataSize < headerSize || !canRead(QByteArray(), buf)) {
+    if (dataSize < qktxh_headerSize || !canRead(QByteArray(), buf)) {
         qCDebug(lcQtGuiTextureIO, "Invalid KTX file %s", logName().constData());
         return QTextureFileData();
     }
 
-    const KTXHeader *header = reinterpret_cast<const KTXHeader *>(buf.constData());
+    const KTXHeader *header = reinterpret_cast<const KTXHeader *>(buf.data());
     if (!checkHeader(*header)) {
         qCDebug(lcQtGuiTextureIO, "Unsupported KTX file format in %s", logName().constData());
         return QTextureFileData();
@@ -137,16 +114,30 @@ QTextureFileData QKtxHandler::read()
     texData.setGLBaseInternalFormat(decode(header->glBaseInternalFormat));
 
     texData.setNumLevels(decode(header->numberOfMipmapLevels));
-    quint32 offset = headerSize + decode(header->bytesOfKeyValueData);
-    const int maxLevels = qMin(texData.numLevels(), 32);               // Cap iterations in case of corrupt file.
-    for (int i = 0; i < maxLevels; i++) {
-        if (offset + sizeof(KTXMipmapLevel) > dataSize)                // Corrupt file; avoid oob read
+    texData.setNumFaces(decode(header->numberOfFaces));
+
+    const quint32 bytesOfKeyValueData = decode(header->bytesOfKeyValueData);
+    if (qktxh_headerSize + bytesOfKeyValueData < quint64(buf.size())) // oob check
+        texData.setKeyValueMetadata(decodeKeyValues(
+                QByteArrayView(buf.data() + qktxh_headerSize, bytesOfKeyValueData)));
+    quint32 offset = qktxh_headerSize + bytesOfKeyValueData;
+
+    constexpr int MAX_ITERATIONS = 32; // cap iterations in case of corrupt data
+
+    for (int level = 0; level < qMin(texData.numLevels(), MAX_ITERATIONS); level++) {
+        if (offset + sizeof(quint32) > dataSize) // Corrupt file; avoid oob read
             break;
-        const KTXMipmapLevel *level = reinterpret_cast<const KTXMipmapLevel *>(buf.constData() + offset);
-        quint32 levelLen = decode(level->imageSize);
-        texData.setDataOffset(offset + sizeof(KTXMipmapLevel::imageSize), i);
-        texData.setDataLength(levelLen, i);
-        offset += sizeof(KTXMipmapLevel::imageSize) + levelLen + (3 - ((levelLen + 3) % 4));
+
+        const quint32 imageSize = decode(qFromUnaligned<quint32>(buf.data() + offset));
+        offset += sizeof(quint32);
+
+        for (int face = 0; face < qMin(texData.numFaces(), MAX_ITERATIONS); face++) {
+            texData.setDataOffset(offset, level, face);
+            texData.setDataLength(imageSize, level, face);
+
+            // Add image data and padding to offset
+            offset += withPadding(imageSize, 4);
+        }
     }
 
     if (!texData.isValid()) {
@@ -174,9 +165,12 @@ bool QKtxHandler::checkHeader(const KTXHeader &header)
     qDebug("Header of %s:", logName().constData());
     qDebug("  glType: 0x%x (%s)", decode(header.glType), ptme.valueToKey(decode(header.glType)));
     qDebug("  glTypeSize: %u", decode(header.glTypeSize));
-    qDebug("  glFormat: 0x%x (%s)", decode(header.glFormat), tfme.valueToKey(decode(header.glFormat)));
-    qDebug("  glInternalFormat: 0x%x (%s)", decode(header.glInternalFormat), tfme.valueToKey(decode(header.glInternalFormat)));
-    qDebug("  glBaseInternalFormat: 0x%x (%s)", decode(header.glBaseInternalFormat), tfme.valueToKey(decode(header.glBaseInternalFormat)));
+    qDebug("  glFormat: 0x%x (%s)", decode(header.glFormat),
+           tfme.valueToKey(decode(header.glFormat)));
+    qDebug("  glInternalFormat: 0x%x (%s)", decode(header.glInternalFormat),
+           tfme.valueToKey(decode(header.glInternalFormat)));
+    qDebug("  glBaseInternalFormat: 0x%x (%s)", decode(header.glBaseInternalFormat),
+           tfme.valueToKey(decode(header.glBaseInternalFormat)));
     qDebug("  pixelWidth: %u", decode(header.pixelWidth));
     qDebug("  pixelHeight: %u", decode(header.pixelHeight));
     qDebug("  pixelDepth: %u", decode(header.pixelDepth));
@@ -185,13 +179,47 @@ bool QKtxHandler::checkHeader(const KTXHeader &header)
     qDebug("  numberOfMipmapLevels: %u", decode(header.numberOfMipmapLevels));
     qDebug("  bytesOfKeyValueData: %u", decode(header.bytesOfKeyValueData));
 #endif
-    return ((decode(header.glType) == 0) &&
-            (decode(header.glFormat) == 0) &&
-            (decode(header.pixelDepth) == 0) &&
-            (decode(header.numberOfFaces) == 1));
+    const bool isCompressedImage = decode(header.glType) == 0 && decode(header.glFormat) == 0
+            && decode(header.pixelDepth) == 0;
+    const bool isCubeMap = decode(header.numberOfFaces) == 6;
+    const bool is2D = decode(header.pixelDepth) == 0 && decode(header.numberOfArrayElements) == 0;
+
+    return is2D && (isCubeMap || isCompressedImage);
 }
 
-quint32 QKtxHandler::decode(quint32 val)
+QMap<QByteArray, QByteArray> QKtxHandler::decodeKeyValues(QByteArrayView view) const
+{
+    QMap<QByteArray, QByteArray> output;
+    quint32 offset = 0;
+    while (offset < view.size() + sizeof(quint32)) {
+        const quint32 keyAndValueByteSize =
+                decode(qFromUnaligned<quint32>(view.constData() + offset));
+        offset += sizeof(quint32);
+
+        if (offset + keyAndValueByteSize > quint64(view.size()))
+            break; // oob read
+
+        // 'key' is a UTF-8 string ending with a null terminator, 'value' is the rest.
+        // To separate the key and value we convert the complete data to utf-8 and find the first
+        // null terminator from the left, here we split the data into two.
+        const auto str = QString::fromUtf8(view.constData() + offset, keyAndValueByteSize);
+        const int idx = str.indexOf('\0'_L1);
+        if (idx == -1)
+            continue;
+
+        const QByteArray key = str.left(idx).toUtf8();
+        const size_t keySize = key.size() + 1; // Actual data size
+        const QByteArray value = QByteArray::fromRawData(view.constData() + offset + keySize,
+                                                         keyAndValueByteSize - keySize);
+
+        offset = withPadding(offset + keyAndValueByteSize, 4);
+        output.insert(key, value);
+    }
+
+    return output;
+}
+
+quint32 QKtxHandler::decode(quint32 val) const
 {
     return inverseEndian ? qbswap<quint32>(val) : val;
 }

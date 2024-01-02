@@ -1,10 +1,12 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/platform/audio/audio_delay_dsp_kernel.h"
 
+#include <emmintrin.h>
 #include <xmmintrin.h>
+#include <tuple>
 
 namespace blink {
 
@@ -54,7 +56,7 @@ std::tuple<unsigned, int> AudioDelayDSPKernel::ProcessARateVector(
   const int buffer_length = buffer_.size();
   const float* buffer = buffer_.Data();
 
-  const float sample_rate = this->SampleRate();
+  const float sample_rate = SampleRate();
   const float* delay_times = delay_times_.Data();
 
   int w_index = write_index_;

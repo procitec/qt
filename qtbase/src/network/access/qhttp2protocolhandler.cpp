@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtNetwork module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qhttpnetworkconnection_p.h"
 #include "qhttp2protocolhandler_p.h"
@@ -64,6 +28,8 @@
 #include <vector>
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 namespace
 {
@@ -149,7 +115,7 @@ QUrl urlkey_from_request(const QHttpNetworkRequest &request)
 
     url.setScheme(request.url().scheme());
     url.setAuthority(request.url().authority(QUrl::FullyEncoded | QUrl::RemoveUserInfo));
-    url.setPath(QLatin1String(request.uri(false)));
+    url.setPath(QLatin1StringView(request.uri(false)));
 
     return url;
 }
@@ -239,8 +205,7 @@ void QHttp2ProtocolHandler::_q_uploadDataReadyRead()
     auto &stream = activeStreams[streamID];
 
     if (!sendDATA(stream)) {
-        finishStreamWithError(stream, QNetworkReply::UnknownNetworkError,
-                              QLatin1String("failed to send DATA"));
+        finishStreamWithError(stream, QNetworkReply::UnknownNetworkError, "failed to send DATA"_L1);
         sendRST_STREAM(streamID, INTERNAL_ERROR);
         markAsReset(streamID);
         deleteActiveStream(streamID);
@@ -344,18 +309,17 @@ bool QHttp2ProtocolHandler::sendRequest()
         // so we cannot create new streams.
         m_channel->emitFinishedWithError(QNetworkReply::ProtocolUnknownError,
                                          "GOAWAY received, cannot start a request");
-        m_channel->spdyRequestsToSend.clear();
+        m_channel->h2RequestsToSend.clear();
         return false;
     }
 
     // Process 'fake' (created by QNetworkAccessManager::connectToHostEncrypted())
     // requests first:
-    auto &requests = m_channel->spdyRequestsToSend;
+    auto &requests = m_channel->h2RequestsToSend;
     for (auto it = requests.begin(), endIt = requests.end(); it != endIt;) {
         const auto &pair = *it;
         const QString scheme(pair.first.url().scheme());
-        if (scheme == QLatin1String("preconnect-http")
-            || scheme == QLatin1String("preconnect-https")) {
+        if (scheme == "preconnect-http"_L1 || scheme == "preconnect-https"_L1) {
             m_connection->preConnectFinished();
             emit pair.second->finished();
             it = requests.erase(it);
@@ -410,14 +374,14 @@ bool QHttp2ProtocolHandler::sendRequest()
         Stream &newStream = activeStreams[newStreamID];
         if (!sendHEADERS(newStream)) {
             finishStreamWithError(newStream, QNetworkReply::UnknownNetworkError,
-                                  QLatin1String("failed to send HEADERS frame(s)"));
+                                  "failed to send HEADERS frame(s)"_L1);
             deleteActiveStream(newStreamID);
             continue;
         }
 
         if (newStream.data() && !sendDATA(newStream)) {
             finishStreamWithError(newStream, QNetworkReply::UnknownNetworkError,
-                                  QLatin1String("failed to send DATA frame(s)"));
+                                  "failed to send DATA frame(s)"_L1);
             sendRST_STREAM(newStreamID, INTERNAL_ERROR);
             markAsReset(newStreamID);
             deleteActiveStream(newStreamID);
@@ -616,8 +580,7 @@ void QHttp2ProtocolHandler::handleDATA()
         auto &stream = activeStreams[streamID];
 
         if (qint32(inboundFrame.payloadSize()) > stream.recvWindow) {
-            finishStreamWithError(stream, QNetworkReply::ProtocolFailure,
-                                  QLatin1String("flow control error"));
+            finishStreamWithError(stream, QNetworkReply::ProtocolFailure, "flow control error"_L1);
             sendRST_STREAM(streamID, FLOW_CONTROL_ERROR);
             markAsReset(streamID);
             deleteActiveStream(streamID);
@@ -690,7 +653,8 @@ void QHttp2ProtocolHandler::handlePRIORITY()
     quint32 streamDependency = 0;
     uchar weight = 0;
     const bool noErr = inboundFrame.priority(&streamDependency, &weight);
-    Q_UNUSED(noErr) Q_ASSERT(noErr);
+    Q_UNUSED(noErr);
+    Q_ASSERT(noErr);
 
 
     const bool exclusive = streamDependency & 0x80000000;
@@ -879,7 +843,7 @@ void QHttp2ProtocolHandler::handleGOAWAY()
     m_channel->emitFinishedWithError(QNetworkReply::ProtocolUnknownError,
                                      "GOAWAY received, cannot start a request");
     // Also, prevent further calls to sendRequest:
-    m_channel->spdyRequestsToSend.clear();
+    m_channel->h2RequestsToSend.clear();
 
     QNetworkReply::NetworkError error = QNetworkReply::NoError;
     QString message;
@@ -890,7 +854,7 @@ void QHttp2ProtocolHandler::handleGOAWAY()
     // successful completion.
     if (errorCode == HTTP2_NO_ERROR) {
         error = QNetworkReply::ContentReSendError;
-        message = QLatin1String("Server stopped accepting new streams before this stream was established");
+        message = "Server stopped accepting new streams before this stream was established"_L1;
     }
 
     for (quint32 id = lastStreamID; id < nextID; id += 2) {
@@ -930,7 +894,7 @@ void QHttp2ProtocolHandler::handleWINDOW_UPDATE()
         auto &stream = activeStreams[streamID];
         if (!valid || sum_will_overflow(stream.sendWindow, delta)) {
             finishStreamWithError(stream, QNetworkReply::ProtocolFailure,
-                                  QLatin1String("invalid WINDOW_UPDATE delta"));
+                                  "invalid WINDOW_UPDATE delta"_L1);
             sendRST_STREAM(streamID, PROTOCOL_ERROR);
             markAsReset(streamID);
             deleteActiveStream(streamID);
@@ -985,7 +949,7 @@ void QHttp2ProtocolHandler::handleContinuedHEADERS()
                 // (these streams are in halfClosedLocal or open state) or
                 // remote-reserved streams from a server's PUSH_PROMISE.
                 finishStreamWithError(stream, QNetworkReply::ProtocolFailure,
-                                      QLatin1String("HEADERS on invalid stream"));
+                                      "HEADERS on invalid stream"_L1);
                 sendRST_STREAM(streamID, CANCEL);
                 markAsReset(streamID);
                 deleteActiveStream(streamID);
@@ -1000,7 +964,12 @@ void QHttp2ProtocolHandler::handleContinuedHEADERS()
     }
 
     std::vector<uchar> hpackBlock(assemble_hpack_block(continuedFrames));
-    if (!hpackBlock.size()) {
+    const bool hasHeaderFields = !hpackBlock.empty();
+    if (hasHeaderFields) {
+        HPack::BitIStream inputStream{&hpackBlock[0], &hpackBlock[0] + hpackBlock.size()};
+        if (!decoder.decodeHeaderFields(inputStream))
+            return connectionError(COMPRESSION_ERROR, "HPACK decompression failed");
+    } else if (firstFrameType == FrameType::PUSH_PROMISE) {
         // It could be a PRIORITY sent in HEADERS - already handled by this
         // point in handleHEADERS. If it was PUSH_PROMISE (HTTP/2 8.2.1):
         // "The header fields in PUSH_PROMISE and any subsequent CONTINUATION
@@ -1009,21 +978,16 @@ void QHttp2ProtocolHandler::handleContinuedHEADERS()
         // not include a complete and valid set of header fields or the :method
         // pseudo-header field identifies a method that is not safe, it MUST
         // respond with a stream error (Section 5.4.2) of type PROTOCOL_ERROR."
-        if (firstFrameType == FrameType::PUSH_PROMISE)
-            resetPromisedStream(continuedFrames[0], Http2::PROTOCOL_ERROR);
-
+        resetPromisedStream(continuedFrames[0], Http2::PROTOCOL_ERROR);
         return;
     }
-
-    HPack::BitIStream inputStream{&hpackBlock[0], &hpackBlock[0] + hpackBlock.size()};
-    if (!decoder.decodeHeaderFields(inputStream))
-        return connectionError(COMPRESSION_ERROR, "HPACK decompression failed");
 
     switch (firstFrameType) {
     case FrameType::HEADERS:
         if (activeStreams.contains(streamID)) {
             Stream &stream = activeStreams[streamID];
-            updateStream(stream, decoder.decodedHeader());
+            if (hasHeaderFields)
+                updateStream(stream, decoder.decodedHeader());
             // Needs to resend the request; we should finish and delete the current stream
             const bool needResend = stream.request().d->needResendWithCredentials;
             // No DATA frames. Or needs to resend.
@@ -1076,7 +1040,7 @@ bool QHttp2ProtocolHandler::acceptSetting(Http2::Settings identifier, quint32 ne
         for (auto id : brokenStreams) {
             auto &stream = activeStreams[id];
             finishStreamWithError(stream, QNetworkReply::ProtocolFailure,
-                                  QLatin1String("SETTINGS window overflow"));
+                                  "SETTINGS window overflow"_L1);
             sendRST_STREAM(id, PROTOCOL_ERROR);
             markAsReset(id);
             deleteActiveStream(id);
@@ -1135,8 +1099,6 @@ void QHttp2ProtocolHandler::updateStream(Stream &stream, const HPack::HttpHeader
     // moment and we are probably not done yet. So we extract url and set it
     // here, if needed.
     int statusCode = 0;
-    QUrl redirectUrl;
-
     for (const auto &pair : headers) {
         const auto &name = pair.name;
         auto value = pair.value;
@@ -1149,22 +1111,20 @@ void QHttp2ProtocolHandler::updateStream(Stream &stream, const HPack::HttpHeader
             statusCode = value.left(3).toInt();
             httpReply->setStatusCode(statusCode);
             m_channel->lastStatus = statusCode; // Mostly useless for http/2, needed for auth
-            httpReplyPrivate->reasonPhrase = QString::fromLatin1(value.mid(4));
+            httpReply->setReasonPhrase(QString::fromLatin1(value.mid(4)));
         } else if (name == ":version") {
-            httpReplyPrivate->majorVersion = value.at(5) - '0';
-            httpReplyPrivate->minorVersion = value.at(7) - '0';
+            httpReply->setMajorVersion(value.at(5) - '0');
+            httpReply->setMinorVersion(value.at(7) - '0');
         } else if (name == "content-length") {
             bool ok = false;
             const qlonglong length = value.toLongLong(&ok);
             if (ok)
                 httpReply->setContentLength(length);
         } else {
-            if (name == "location")
-                redirectUrl = QUrl::fromEncoded(value);
             QByteArray binder(", ");
             if (name == "set-cookie")
                 binder = "\n";
-            httpReplyPrivate->fields.append(qMakePair(name, value.replace('\0', binder)));
+            httpReply->appendHeaderField(name, value.replace('\0', binder));
         }
     }
 
@@ -1188,7 +1148,7 @@ void QHttp2ProtocolHandler::updateStream(Stream &stream, const HPack::HttpHeader
                 // Add the request back in queue, we'll retry later now that
                 // we've gotten some username/password set on it:
                 httpRequest.d->needResendWithCredentials = true;
-                m_channel->spdyRequestsToSend.insert(httpRequest.priority(), stream.httpPair);
+                m_channel->h2RequestsToSend.insert(httpRequest.priority(), stream.httpPair);
                 httpReply->d_func()->clearHeaders();
                 // If we have data we were uploading we need to reset it:
                 if (stream.data()) {
@@ -1225,8 +1185,20 @@ void QHttp2ProtocolHandler::updateStream(Stream &stream, const HPack::HttpHeader
         }
     }
 
-    if (QHttpNetworkReply::isHttpRedirect(statusCode) && redirectUrl.isValid())
-        httpReply->setRedirectUrl(redirectUrl);
+    if (QHttpNetworkReply::isHttpRedirect(statusCode) && httpRequest.isFollowRedirects()) {
+        QHttpNetworkConnectionPrivate::ParseRedirectResult result =
+                m_connection->d_func()->parseRedirectResponse(httpReply);
+        if (result.errorCode != QNetworkReply::NoError) {
+            auto errorString = m_connection->d_func()->errorDetail(result.errorCode, m_socket);
+            finishStreamWithError(stream, result.errorCode, errorString);
+            sendRST_STREAM(stream.streamID, INTERNAL_ERROR);
+            markAsReset(stream.streamID);
+            return;
+        }
+
+        if (result.redirectUrl.isValid())
+            httpReply->setRedirectUrl(result.redirectUrl);
+    }
 
     if (httpReplyPrivate->isCompressed() && httpRequest.d->autoDecompress)
         httpReplyPrivate->removeAutoDecompressHeader();
@@ -1266,22 +1238,11 @@ void QHttp2ProtocolHandler::updateStream(Stream &stream, const Frame &frame,
 
     if (const auto length = frame.dataSize()) {
         const char *data = reinterpret_cast<const char *>(frame.dataBegin());
-        auto &httpRequest = stream.request();
         auto replyPrivate = httpReply->d_func();
 
         replyPrivate->totalProgress += length;
 
-        const QByteArray wrapped(data, length);
-        if (httpRequest.d->autoDecompress && replyPrivate->isCompressed()) {
-            QByteDataBuffer inDataBuffer;
-            inDataBuffer.append(wrapped);
-            replyPrivate->uncompressBodyData(&inDataBuffer, &replyPrivate->responseData);
-            // Now, make sure replyPrivate's destructor will properly clean up
-            // buffers allocated (if any) by zlib.
-            replyPrivate->autoDecompress = true;
-        } else {
-            replyPrivate->responseData.append(wrapped);
-        }
+        replyPrivate->responseData.append(QByteArray(data, length));
 
         if (replyPrivate->shouldEmitSignals()) {
             if (connectionType == Qt::DirectConnection) {
@@ -1359,7 +1320,7 @@ quint32 QHttp2ProtocolHandler::createNewStream(const HttpMessagePair &message, b
     const auto replyPrivate = reply->d_func();
     replyPrivate->connection = m_connection;
     replyPrivate->connectionChannel = m_channel;
-    reply->setSpdyWasUsed(true);
+    reply->setHttp2WasUsed(true);
     streamIDs.insert(reply, newStreamID);
     connect(reply, SIGNAL(destroyed(QObject*)),
             this, SLOT(_q_replyDestroyed(QObject*)));
@@ -1377,6 +1338,8 @@ quint32 QHttp2ProtocolHandler::createNewStream(const HttpMessagePair &message, b
             streamIDs.insert(src, newStreamID);
         }
     }
+
+    QMetaObject::invokeMethod(reply, "requestSent", Qt::QueuedConnection);
 
     activeStreams.insert(newStreamID, newStream);
 
@@ -1465,7 +1428,7 @@ void QHttp2ProtocolHandler::deleteActiveStream(quint32 streamID)
     }
 
     removeFromSuspended(streamID);
-    if (m_channel->spdyRequestsToSend.size())
+    if (m_channel->h2RequestsToSend.size())
         QMetaObject::invokeMethod(this, "sendRequest", Qt::QueuedConnection);
 }
 
@@ -1490,7 +1453,7 @@ void QHttp2ProtocolHandler::resumeSuspendedStreams()
         Stream &stream = activeStreams[streamID];
         if (!sendDATA(stream)) {
             finishStreamWithError(stream, QNetworkReply::UnknownNetworkError,
-                                  QLatin1String("failed to send DATA"));
+                                  "failed to send DATA"_L1);
             sendRST_STREAM(streamID, INTERNAL_ERROR);
             markAsReset(streamID);
             deleteActiveStream(streamID);
@@ -1537,9 +1500,9 @@ bool QHttp2ProtocolHandler::tryReserveStream(const Http2::Frame &pushPromiseFram
         return false;
 
     QUrl url;
-    url.setScheme(QLatin1String(pseudoHeaders[":scheme"]));
-    url.setAuthority(QLatin1String(pseudoHeaders[":authority"]));
-    url.setPath(QLatin1String(pseudoHeaders[":path"]));
+    url.setScheme(QLatin1StringView(pseudoHeaders[":scheme"]));
+    url.setAuthority(QLatin1StringView(pseudoHeaders[":authority"]));
+    url.setPath(QLatin1StringView(pseudoHeaders[":path"]));
 
     if (!url.isValid())
         return false;
@@ -1584,7 +1547,7 @@ void QHttp2ProtocolHandler::initReplyFromPushPromise(const HttpMessagePair &mess
     Q_ASSERT(promisedData.contains(cacheKey));
     auto promise = promisedData.take(cacheKey);
     Q_ASSERT(message.second);
-    message.second->setSpdyWasUsed(true);
+    message.second->setHttp2WasUsed(true);
 
     qCDebug(QT_HTTP2) << "found cached/promised response on stream" << promise.reservedID;
 
@@ -1636,7 +1599,7 @@ void QHttp2ProtocolHandler::connectionError(Http2::Http2Error errorCode,
     m_channel->emitFinishedWithError(error, message);
 
     for (auto &stream: activeStreams)
-        finishStreamWithError(stream, error, QLatin1String(message));
+        finishStreamWithError(stream, error, QLatin1StringView(message));
 
     closeSession();
 }
@@ -1652,3 +1615,5 @@ void QHttp2ProtocolHandler::closeSession()
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qhttp2protocolhandler_p.cpp"

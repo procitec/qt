@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,12 +7,13 @@
 #include "base/base_switches.h"
 #include "base/feature_list.h"
 #include "base/metrics/field_trial.h"
+#include "base/strings/escape.h"
 #include "components/variations/field_trial_config/field_trial_util.h"
 #include "components/variations/variations_switches.h"
-#include "net/base/escape.h"
 
 namespace variations {
 
+#ifndef TOOLKIT_QT
 namespace {
 
 // Format the provided |param_key| and |param_value| as commandline input.
@@ -25,13 +26,15 @@ std::string GenerateParam(const std::string& param_key,
 }
 
 }  // namespace
+#endif
 
 std::string GetVariationsCommandLine() {
+#ifndef TOOLKIT_QT
   std::string field_trial_states;
-  base::FieldTrialList::AllStatesToString(&field_trial_states, true);
+  base::FieldTrialList::AllStatesToString(&field_trial_states);
 
   std::string field_trial_params =
-      base::FieldTrialList::AllParamsToString(true, &EscapeValue);
+      base::FieldTrialList::AllParamsToString(&EscapeValue);
 
   std::string enable_features;
   std::string disable_features;
@@ -45,6 +48,9 @@ std::string GetVariationsCommandLine() {
       GenerateParam(switches::kForceFieldTrialParams, field_trial_params));
   output.append(GenerateParam(::switches::kEnableFeatures, enable_features));
   output.append(GenerateParam(::switches::kDisableFeatures, disable_features));
+#else
+  std::string output;
+#endif
   return output;
 }
 

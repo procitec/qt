@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the plugins of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qwaylandscreen_p.h"
 
@@ -55,12 +19,11 @@ namespace QtWaylandClient {
 
 QWaylandXdgOutputManagerV1::QWaylandXdgOutputManagerV1(QWaylandDisplay* display, uint id, uint version)
     : QtWayland::zxdg_output_manager_v1(display->wl_registry(), id, qMin(3u, version))
-    , m_version(qMin(3u, version))
 {
 }
 
 QWaylandScreen::QWaylandScreen(QWaylandDisplay *waylandDisplay, int version, uint32_t id)
-    : QtWayland::wl_output(waylandDisplay->wl_registry(), id, qMin(version, 2))
+    : QtWayland::wl_output(waylandDisplay->wl_registry(), id, qMin(version, 3))
     , m_outputId(id)
     , mWaylandDisplay(waylandDisplay)
     , mOutputName(QStringLiteral("Screen%1").arg(id))
@@ -72,7 +35,7 @@ QWaylandScreen::QWaylandScreen(QWaylandDisplay *waylandDisplay, int version, uin
         qCWarning(lcQpaWayland) << "wl_output done event not supported by compositor,"
                                 << "QScreen may not work correctly";
         mWaylandDisplay->forceRoundTrip(); // Give the compositor a chance to send geometry etc.
-        mOutputDone = true; // Fake the done event
+        mProcessedEvents |= OutputDoneEvent; // Fake the done event
         maybeInitialize();
     }
 }
@@ -81,16 +44,30 @@ QWaylandScreen::~QWaylandScreen()
 {
     if (zxdg_output_v1::isInitialized())
         zxdg_output_v1::destroy();
+    if (wl_output::isInitialized() && wl_output::version() >= WL_OUTPUT_RELEASE_SINCE_VERSION)
+        wl_output::release();
+}
+
+uint QWaylandScreen::requiredEvents() const
+{
+    uint ret = OutputDoneEvent;
+
+    if (mWaylandDisplay->xdgOutputManager()) {
+        if (mWaylandDisplay->xdgOutputManager()->version() >= 2)
+            ret |= XdgOutputNameEvent;
+
+        if (mWaylandDisplay->xdgOutputManager()->version() < 3)
+            ret |= XdgOutputDoneEvent;
+    }
+    return ret;
 }
 
 void QWaylandScreen::maybeInitialize()
 {
     Q_ASSERT(!mInitialized);
 
-    if (!mOutputDone)
-        return;
-
-    if (mWaylandDisplay->xdgOutputManager() && !mXdgOutputDone)
+    const uint requiredEvents = this->requiredEvents();
+    if ((mProcessedEvents & requiredEvents) != requiredEvents)
         return;
 
     mInitialized = true;
@@ -173,9 +150,9 @@ QList<QPlatformScreen *> QWaylandScreen::virtualSiblings() const
     const QList<QWaylandScreen*> screens = mWaylandDisplay->screens();
     auto *placeholder = mWaylandDisplay->placeholderScreen();
 
-    list.reserve(screens.count() + (placeholder ? 1 : 0));
+    list.reserve(screens.size() + (placeholder ? 1 : 0));
 
-    for (QWaylandScreen *screen : qAsConst(screens)) {
+    for (QWaylandScreen *screen : std::as_const(screens)) {
         if (screen->screen())
             list << screen;
     }
@@ -184,16 +161,6 @@ QList<QPlatformScreen *> QWaylandScreen::virtualSiblings() const
         list << placeholder;
 
     return list;
-}
-
-void QWaylandScreen::setOrientationUpdateMask(Qt::ScreenOrientations mask)
-{
-    const auto allWindows = QGuiApplication::allWindows();
-    for (QWindow *window : allWindows) {
-        QWaylandWindow *w = static_cast<QWaylandWindow *>(window->handle());
-        if (w && w->waylandScreen() == this)
-            w->setOrientationMask(mask);
-    }
 }
 
 Qt::ScreenOrientation QWaylandScreen::orientation() const
@@ -276,9 +243,8 @@ void QWaylandScreen::output_scale(int32_t factor)
 
 void QWaylandScreen::output_done()
 {
-    mOutputDone = true;
-    if (zxdg_output_v1::isInitialized() && mWaylandDisplay->xdgOutputManager()->version() >= 3)
-        mXdgOutputDone = true;
+    mProcessedEvents |= OutputDoneEvent;
+
     if (mInitialized) {
         updateOutputProperties();
         if (zxdg_output_v1::isInitialized())
@@ -339,7 +305,7 @@ void QWaylandScreen::zxdg_output_v1_done()
     if (Q_UNLIKELY(mWaylandDisplay->xdgOutputManager()->version() >= 3))
         qWarning(lcQpaWayland) << "zxdg_output_v1.done received on version 3 or newer, this is most likely a bug in the compositor";
 
-    mXdgOutputDone = true;
+    mProcessedEvents |= XdgOutputDoneEvent;
     if (mInitialized)
         updateXdgOutputProperties();
     else
@@ -348,7 +314,11 @@ void QWaylandScreen::zxdg_output_v1_done()
 
 void QWaylandScreen::zxdg_output_v1_name(const QString &name)
 {
+    if (Q_UNLIKELY(mInitialized))
+        qWarning(lcQpaWayland) << "zxdg_output_v1.name received after output has been initialized, this is most likely a bug in the compositor";
+
     mOutputName = name;
+    mProcessedEvents |= XdgOutputNameEvent;
 }
 
 void QWaylandScreen::updateXdgOutputProperties()

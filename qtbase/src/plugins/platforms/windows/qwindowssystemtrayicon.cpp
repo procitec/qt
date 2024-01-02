@@ -1,55 +1,7 @@
-/****************************************************************************
-**
-** Copyright (C) 2017 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the plugins of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2017 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#if defined(WINVER) && WINVER < 0x0601
-#  undef WINVER
-#endif
-#if !defined(WINVER)
-#  define WINVER 0x0601 // required for NOTIFYICONDATA_V2_SIZE, ChangeWindowMessageFilterEx() (MinGW 5.3)
-#endif
-
-#if defined(NTDDI_VERSION) && NTDDI_VERSION < 0x06010000
-#  undef NTDDI_VERSION
-#endif
-#if !defined(NTDDI_VERSION)
-#  define NTDDI_VERSION 0x06010000 // required for Shell_NotifyIconGetRect (MinGW 5.3)
-#endif
+#include <QtCore/qt_windows.h>
 
 #include "qwindowssystemtrayicon.h"
 #include "qwindowscontext.h"
@@ -60,12 +12,11 @@
 #include <QtGui/qguiapplication.h>
 #include <QtGui/qpixmap.h>
 #include <QtCore/qdebug.h>
+#include <QtCore/qlist.h>
 #include <QtCore/qrect.h>
-#include <QtCore/qvector.h>
 #include <QtCore/qsettings.h>
 #include <qpa/qwindowsysteminterface.h>
 
-#include <qt_windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -119,7 +70,7 @@ struct QWindowsHwndSystemTrayIconEntry
     QWindowsSystemTrayIcon *trayIcon;
 };
 
-using HwndTrayIconEntries = QVector<QWindowsHwndSystemTrayIconEntry>;
+using HwndTrayIconEntries = QList<QWindowsHwndSystemTrayIconEntry>;
 
 Q_GLOBAL_STATIC(HwndTrayIconEntries, hwndTrayIconEntries)
 
@@ -136,9 +87,6 @@ static int indexOfHwnd(HWND hwnd)
 extern "C" LRESULT QT_WIN_CALLBACK qWindowsTrayIconWndProc(HWND hwnd, UINT message,
                                                            WPARAM wParam, LPARAM lParam)
 {
-    // QTBUG-79248: Trigger screen update if there are no other windows.
-    if (message == WM_DPICHANGED && QGuiApplication::topLevelWindows().isEmpty())
-        QWindowsContext::instance()->screenManager().handleScreenChanges();
     if (message == MYWM_TASKBARCREATED || message == MYWM_NOTIFYICON
         || message == WM_INITMENU || message == WM_INITMENUPOPUP
         || message == WM_CLOSE || message == WM_COMMAND) {
@@ -214,8 +162,7 @@ void QWindowsSystemTrayIcon::cleanup()
 void QWindowsSystemTrayIcon::updateIcon(const QIcon &icon)
 {
     qCDebug(lcQpaTrayIcon) << __FUNCTION__ << '(' << icon << ')' << this;
-    if (icon.cacheKey() == m_icon.cacheKey())
-        return;
+    m_icon = icon;
     const HICON hIconToDestroy = createIcon(icon);
     if (ensureInstalled())
         sendTrayMessage(NIM_MODIFY);
@@ -454,8 +401,15 @@ bool QWindowsSystemTrayIcon::winEvent(const MSG &message, long *result)
         QWindowsPopupMenu::notifyTriggered(LOWORD(message.wParam));
         break;
     default:
-        if (message.message == MYWM_TASKBARCREATED) // self-registered message id (tray crashed)
+        if (message.message == MYWM_TASKBARCREATED) {
+            // self-registered message id to handle that
+            // - screen resolution/DPR changed
+            const QIcon oldIcon = m_icon;
+            m_icon = QIcon(); // updateIcon is a no-op if the icon doesn't change
+            updateIcon(oldIcon);
+            // - or tray crashed
             sendTrayMessage(NIM_ADD);
+        }
         break;
     }
     return false;

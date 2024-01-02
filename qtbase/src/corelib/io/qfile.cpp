@@ -1,42 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Copyright (C) 2017 Intel Corporation.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtCore module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// Copyright (C) 2017 Intel Corporation.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qplatformdefs.h"
 #include "qdebug.h"
@@ -55,13 +19,13 @@
 # include "qcoreapplication.h"
 #endif
 
-#include <private/qmemory_p.h>
-
 #ifdef QT_NO_QOBJECT
 #define tr(X) QString::fromLatin1(X)
 #endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 Q_DECL_COLD_FUNCTION
 static bool file_already_open(QFile &file, const char *where = nullptr)
@@ -80,32 +44,32 @@ QFilePrivate::~QFilePrivate()
 }
 
 bool
-QFilePrivate::openExternalFile(int flags, int fd, QFile::FileHandleFlags handleFlags)
+QFilePrivate::openExternalFile(QIODevice::OpenMode flags, int fd, QFile::FileHandleFlags handleFlags)
 {
 #ifdef QT_NO_FSFILEENGINE
     Q_UNUSED(flags);
     Q_UNUSED(fd);
     return false;
 #else
-    auto fs = qt_make_unique<QFSFileEngine>();
+    auto fs = std::make_unique<QFSFileEngine>();
     auto fe = fs.get();
     fileEngine = std::move(fs);
-    return fe->open(QIODevice::OpenMode(flags), fd, handleFlags);
+    return fe->open(flags, fd, handleFlags);
 #endif
 }
 
 bool
-QFilePrivate::openExternalFile(int flags, FILE *fh, QFile::FileHandleFlags handleFlags)
+QFilePrivate::openExternalFile(QIODevice::OpenMode flags, FILE *fh, QFile::FileHandleFlags handleFlags)
 {
 #ifdef QT_NO_FSFILEENGINE
     Q_UNUSED(flags);
     Q_UNUSED(fh);
     return false;
 #else
-    auto fs = qt_make_unique<QFSFileEngine>();
+    auto fs = std::make_unique<QFSFileEngine>();
     auto fe = fs.get();
     fileEngine = std::move(fs);
-    return fe->open(QIODevice::OpenMode(flags), fh, handleFlags);
+    return fe->open(flags, fh, handleFlags);
 #endif
 }
 
@@ -173,9 +137,8 @@ QAbstractFileEngine *QFilePrivate::engine() const
 
     QTextStream takes care of converting the 8-bit data stored on
     disk into a 16-bit Unicode QString. By default, it assumes that
-    the user system's local 8-bit encoding is used (e.g., UTF-8
-    on most unix based operating systems; see QTextCodec::codecForLocale() for
-    details). This can be changed using \l QTextStream::setCodec().
+    the file is encoded in UTF-8. This can be changed using
+    \l QTextStream::setEncoding().
 
     To write text, we can use operator<<(), which is overloaded to
     take a QTextStream on the left and various data types (including
@@ -187,13 +150,20 @@ QAbstractFileEngine *QFilePrivate::engine() const
     data and operator>>() to read it back. See the class
     documentation for details.
 
-    When you use QFile, QFileInfo, and QDir to access the file system
-    with Qt, you can use Unicode file names. On Unix, these file
-    names are converted to an 8-bit encoding. If you want to use
-    standard C++ APIs (\c <cstdio> or \c <iostream>) or
-    platform-specific APIs to access files instead of QFile, you can
-    use the encodeName() and decodeName() functions to convert
-    between Unicode file names and 8-bit file names.
+    \section1 Signals
+
+    Unlike other QIODevice implementations, such as QTcpSocket, QFile does not
+    emit the aboutToClose(), bytesWritten(), or readyRead() signals. This
+    implementation detail means that QFile is not suitable for reading and
+    writing certain types of files, such as device files on Unix platforms.
+
+    \section1 Platform Specific Issues
+
+    \l{Input/Output and Networking}{Qt APIs related to I/O} use UTF-16 based
+    QStrings to represent file paths. Standard C++ APIs (\c <cstdio> or
+    \c <iostream>) or platform-specific APIs however often need a 8-bit encoded
+    path. You can use encodeName() and decodeName() to convert between both
+    representations.
 
     On Unix, there are some special system files (e.g. in \c /proc) for which
     size() will always return 0, yet you may still be able to read more data
@@ -205,15 +175,6 @@ QAbstractFileEngine *QFilePrivate::engine() const
     example uses QTextStream to read \c /proc/modules line by line:
 
     \snippet file/file.cpp 3
-
-    \section1 Signals
-
-    Unlike other QIODevice implementations, such as QTcpSocket, QFile does not
-    emit the aboutToClose(), bytesWritten(), or readyRead() signals. This
-    implementation detail means that QFile is not suitable for reading and
-    writing certain types of files, such as device files on Unix platforms.
-
-    \section1 Platform Specific Issues
 
     File permissions are handled differently on Unix-like systems and
     Windows.  In a non \l{QIODevice::isWritable()}{writable}
@@ -228,6 +189,8 @@ QAbstractFileEngine *QFilePrivate::engine() const
     passed. Qt does not manipulate access control lists (ACLs), which makes this
     function mostly useless for NTFS volumes. It may still be of use for USB
     sticks that use VFAT file systems. POSIX ACLs are not manipulated, either.
+
+    \include android-content-uri-limitations.qdocinc
 
     \sa QTextStream, QDataStream, QFileInfo, QDir, {The Qt Resource System}
 */
@@ -263,6 +226,15 @@ QFile::QFile(QObject *parent)
 }
 /*!
     Constructs a new file object to represent the file with the given \a name.
+
+//! [qfile-explicit-constructor-note]
+    \note In versions up to and including Qt 6.8, this constructor is
+    implicit, for backward compatibility. Starting from Qt 6.9 this
+    constructor is unconditionally \c{explicit}. Users can force this
+    constructor to be \c{explicit} even in earlier versions of Qt by
+    defining the \c{QT_EXPLICIT_QFILE_CONSTRUCTION_FROM_PATH} macro
+    before including any Qt header.
+//! [qfile-explicit-constructor-note]
 */
 QFile::QFile(const QString &name)
     : QFileDevice(*new QFilePrivate, nullptr)
@@ -350,24 +322,12 @@ QFile::setFileName(const QString &name)
 /*!
     \fn QByteArray QFile::encodeName(const QString &fileName)
 
-    Converts \a fileName to the local 8-bit
-    encoding determined by the user's locale. This is sufficient for
-    file names that the user chooses. File names hard-coded into the
-    application should only use 7-bit ASCII filename characters.
+    Converts \a fileName to an 8-bit encoding that you can use in native
+    APIs. On Windows, the encoding is the one from active Windows (ANSI)
+    codepage. On other platforms, this is UTF-8, for \macos in decomposed
+    form (NFD).
 
     \sa decodeName()
-*/
-
-/*!
-    \typedef QFile::EncoderFn
-    \obsolete
-
-    This is a typedef for a pointer to a function with the following
-    signature:
-
-    \snippet code/src_corelib_io_qfile.cpp 1
-
-    \sa setEncodingFunction(), encodeName()
 */
 
 /*!
@@ -376,39 +336,6 @@ QFile::setFileName(const QString &name)
     This does the reverse of QFile::encodeName() using \a localFileName.
 
     \sa encodeName()
-*/
-
-/*!
-    \fn void QFile::setEncodingFunction(EncoderFn function)
-    \obsolete
-
-    This function does nothing. It is provided for compatibility with Qt 4 code
-    that attempted to set a different encoding function for file names. That
-    feature is flawed and no longer supported in Qt 5.
-
-    \sa encodeName(), setDecodingFunction()
-*/
-
-/*!
-    \typedef QFile::DecoderFn
-
-    This is a typedef for a pointer to a function with the following
-    signature:
-
-    \snippet code/src_corelib_io_qfile.cpp 2
-
-    \sa setDecodingFunction()
-*/
-
-/*!
-    \fn void QFile::setDecodingFunction(DecoderFn function)
-    \obsolete
-
-    This function does nothing. It is provided for compatibility with Qt 4 code
-    that attempted to set a different decoding function for file names. That
-    feature is flawed and no longer supported in Qt 5.
-
-    \sa setEncodingFunction(), decodeName()
 */
 
 /*!
@@ -425,8 +352,8 @@ QFile::exists() const
 {
     Q_D(const QFile);
     // 0x1000000 = QAbstractFileEngine::Refresh, forcing an update
-    return (d->engine()->fileFlags(QAbstractFileEngine::FlagsMask
-                                    | QAbstractFileEngine::Refresh) & QAbstractFileEngine::ExistsFlag);
+    return d->engine()->fileFlags(QAbstractFileEngine::FlagsMask
+                                    | QAbstractFileEngine::Refresh).testAnyFlag(QAbstractFileEngine::ExistsFlag);
 }
 
 /*!
@@ -460,21 +387,8 @@ QFile::exists(const QString &fileName)
 QString QFile::symLinkTarget() const
 {
     Q_D(const QFile);
-    return d->engine()->fileName(QAbstractFileEngine::LinkName);
+    return d->engine()->fileName(QAbstractFileEngine::AbsoluteLinkTarget);
 }
-
-#if QT_DEPRECATED_SINCE(5, 13)
-/*!
-    \obsolete
-
-    Use symLinkTarget() instead.
-*/
-QString
-QFile::readLink() const
-{
-    return symLinkTarget();
-}
-#endif
 
 /*!
     \fn static QString QFile::symLinkTarget(const QString &fileName)
@@ -491,19 +405,6 @@ QString QFile::symLinkTarget(const QString &fileName)
 {
     return QFileInfo(fileName).symLinkTarget();
 }
-
-#if QT_DEPRECATED_SINCE(5, 13)
-/*!
-    \obsolete
-
-    Use symLinkTarget() instead.
-*/
-QString
-QFile::readLink(const QString &fileName)
-{
-    return symLinkTarget(fileName);
-}
-#endif
 
 /*!
     Removes the file specified by fileName(). Returns \c true if successful;
@@ -525,7 +426,7 @@ QFile::remove()
     }
     unsetError();
     close();
-    if(error() == QFile::NoError) {
+    if (error() == QFile::NoError) {
         if (d->engine()->remove()) {
             unsetError();
             return true;
@@ -690,7 +591,7 @@ QFile::rename(const QString &newName)
             // report both errors
             d->setError(QFile::RenameError,
                         tr("Error while renaming: %1").arg(error.toString())
-                        + QLatin1Char('\n')
+                        + u'\n'
                         + tr("Unable to restore from %1: %2").
                         arg(QDir::toNativeSeparators(tmp.filePath()), error2.toString()));
             return false;
@@ -702,7 +603,7 @@ QFile::rename(const QString &newName)
     }
     unsetError();
     close();
-    if(error() == QFile::NoError) {
+    if (error() == QFile::NoError) {
         if (changingCase ? d->engine()->renameOverwrite(newName) : d->engine()->rename(newName)) {
             unsetError();
             // engine was able to handle the new name so we just reset it
@@ -733,7 +634,7 @@ QFile::rename(const QString &newName)
                     d->setError(QFile::RenameError, errorString());
                     error = true;
                 }
-                if(!error) {
+                if (!error) {
                     if (!remove()) {
                         d->setError(QFile::RenameError, tr("Cannot remove source file"));
                         error = true;
@@ -833,6 +734,9 @@ QFile::link(const QString &fileName, const QString &linkName)
 
     \include qfile-copy.qdocinc
 
+    \note On Android, this operation is not yet supported for \c content
+    scheme URIs.
+
     \sa setFileName()
 */
 
@@ -853,17 +757,17 @@ QFile::copy(const QString &newName)
     }
     unsetError();
     close();
-    if(error() == QFile::NoError) {
+    if (error() == QFile::NoError) {
         if (d->engine()->copy(newName)) {
             unsetError();
             return true;
         } else {
             bool error = false;
-            if(!open(QFile::ReadOnly)) {
+            if (!open(QFile::ReadOnly)) {
                 error = true;
                 d->setError(QFile::CopyError, tr("Cannot open %1 for input").arg(d->fileName));
             } else {
-                const auto fileTemplate = QLatin1String("%1/qt_temp.XXXXXX");
+                const auto fileTemplate = "%1/qt_temp.XXXXXX"_L1;
 #ifdef QT_NO_TEMPORARYFILE
                 QFile out(fileTemplate.arg(QFileInfo(newName).path()));
                 if (!out.open(QIODevice::ReadWrite))
@@ -891,7 +795,8 @@ QFile::copy(const QString &newName)
                             totalRead += in;
                             if (in != out.write(block, in)) {
                                 close();
-                                d->setError(QFile::CopyError, tr("Failure to write block"));
+                                d->setError(QFile::CopyError, tr("Failure to write block: %1")
+                                            .arg(out.errorString()));
                                 error = true;
                                 break;
                             }
@@ -911,7 +816,8 @@ QFile::copy(const QString &newName)
                         if (!out.rename(newName)) {
                             error = true;
                             close();
-                            d->setError(QFile::CopyError, tr("Cannot create %1 for output").arg(newName));
+                            d->setError(QFile::CopyError, tr("Cannot create %1 for output: %2")
+                                        .arg(newName, out.errorString()));
                         }
                     }
 #ifdef QT_NO_TEMPORARYFILE
@@ -923,7 +829,7 @@ QFile::copy(const QString &newName)
 #endif
                 }
             }
-            if(!error) {
+            if (!error) {
                 QFile::setPermissions(newName, permissions());
                 close();
                 unsetError();
@@ -940,6 +846,9 @@ QFile::copy(const QString &newName)
     Copies the file named \a fileName to \a newName.
 
     \include qfile-copy.qdocinc
+
+    \note On Android, this operation is not yet supported for \c content
+    scheme URIs.
 
     \sa rename()
 */
@@ -960,7 +869,12 @@ QFile::copy(const QString &fileName, const QString &newName)
 
     \note In \l{QIODevice::}{WriteOnly} or \l{QIODevice::}{ReadWrite}
     mode, if the relevant file does not already exist, this function
-    will try to create a new file before opening it.
+    will try to create a new file before opening it. The file will be
+    created with mode 0666 masked by the umask on POSIX systems, and
+    with permissions inherited from the parent directory on Windows.
+    On Android, it's expected to have access permission to the parent
+    of the file name, otherwise, it won't be possible to create this
+    non-existing file.
 
     \sa QIODevice::OpenMode, setFileName()
 */
@@ -986,7 +900,52 @@ bool QFile::open(OpenMode mode)
         return true;
     }
     QFile::FileError err = d->fileEngine->error();
-    if(err == QFile::UnspecifiedError)
+    if (err == QFile::UnspecifiedError)
+        err = QFile::OpenError;
+    d->setError(err, d->fileEngine->errorString());
+    return false;
+}
+
+/*!
+    \overload
+
+    If the file does not exist and \a mode implies creating it, it is created
+    with the specified \a permissions.
+
+    On POSIX systems the actual permissions are influenced by the
+    value of \c umask.
+
+    On Windows the permissions are emulated using ACLs. These ACLs may be in non-canonical
+    order when the group is granted less permissions than others. Files and directories with
+    such permissions will generate warnings when the Security tab of the Properties dialog
+    is opened. Granting the group all permissions granted to others avoids such warnings.
+
+    \sa QIODevice::OpenMode, setFileName()
+    \since 6.3
+*/
+bool QFile::open(OpenMode mode, QFile::Permissions permissions)
+{
+    Q_D(QFile);
+    if (isOpen())
+        return file_already_open(*this);
+    // Either Append or NewOnly implies WriteOnly
+    if (mode & (Append | NewOnly))
+        mode |= WriteOnly;
+    unsetError();
+    if ((mode & (ReadOnly | WriteOnly)) == 0) {
+        qWarning("QIODevice::open: File access not specified");
+        return false;
+    }
+
+    // QIODevice provides the buffering, so there's no need to request it from the file engine.
+    if (d->engine()->open(mode | QIODevice::Unbuffered, permissions)) {
+        QIODevice::open(mode);
+        if (mode & Append)
+            seek(size());
+        return true;
+    }
+    QFile::FileError err = d->fileEngine->error();
+    if (err == QFile::UnspecifiedError)
         err = QFile::OpenError;
     d->setError(err, d->fileEngine->errorString());
     return false;
@@ -1198,6 +1157,98 @@ qint64 QFile::size() const
 {
     return QFileDevice::size(); // for now
 }
+
+/*!
+    \fn QFile::QFile(const std::filesystem::path &name)
+    \since 6.0
+
+    Constructs a new file object to represent the file with the given \a name.
+
+    \include qfile.cpp qfile-explicit-constructor-note
+*/
+/*!
+    \fn QFile::QFile(const std::filesystem::path &name, QObject *parent)
+    \since 6.0
+
+    Constructs a new file object with the given \a parent to represent the
+    file with the specified \a name.
+*/
+/*!
+    \fn std::filesystem::path QFile::filesystemFileName() const
+    \since 6.0
+    Returns fileName() as \c{std::filesystem::path}.
+*/
+/*!
+    \fn void QFile::setFileName(const std::filesystem::path &name)
+    \since 6.0
+    \overload
+*/
+/*!
+    \fn bool QFile::rename(const std::filesystem::path &newName)
+    \since 6.0
+    \overload
+*/
+/*!
+    \fn bool QFile::link(const std::filesystem::path &newName)
+    \since 6.0
+    \overload
+*/
+/*!
+    \fn bool QFile::copy(const std::filesystem::path &newName)
+    \since 6.0
+    \overload
+*/
+/*!
+    \fn QFile::Permissions QFile::permissions(const std::filesystem::path &filename)
+    \since 6.0
+    \overload
+*/
+/*!
+    \fn bool QFile::setPermissions(const std::filesystem::path &filename, Permissions permissionSpec)
+    \since 6.0
+    \overload
+*/
+/*!
+    \fn bool exists(const std::filesystem::path &fileName)
+    \since 6.3
+    \overload
+*/
+/*!
+    \fn std::filesystem::path QFile::filesystemSymLinkTarget() const
+    \since 6.3
+    Returns symLinkTarget() as \c{std::filesystem::path}.
+*/
+/*!
+    \fn std::filesystem::path QFile::filesystemSymLinkTarget(const std::filesystem::path &fileName)
+    \since 6.3
+    Returns symLinkTarget() as \c{std::filesystem::path} of \a fileName.
+*/
+/*!
+    \fn bool remove(const std::filesystem::path &fileName)
+    \since 6.3
+    \overload
+*/
+/*!
+    \fn bool moveToTrash(const std::filesystem::path &fileName, QString *pathInTrash)
+    \since 6.3
+    \overload
+*/
+/*!
+    \fn bool rename(const std::filesystem::path &oldName, const std::filesystem::path &newName)
+    \since 6.3
+    \overload
+*/
+/*!
+    \fn bool link(const std::filesystem::path &fileName, const std::filesystem::path &newName);
+    \since 6.3
+    \overload
+*/
+/*!
+    \fn bool copy(const std::filesystem::path &fileName, const std::filesystem::path &newName);
+    \since 6.3
+    \overload
+*/
+
 
 QT_END_NAMESPACE
 

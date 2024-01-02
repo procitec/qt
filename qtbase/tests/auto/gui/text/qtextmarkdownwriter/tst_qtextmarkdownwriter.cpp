@@ -1,32 +1,7 @@
-/****************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the test suite of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
-#include <QtTest/QtTest>
+#include <QTest>
 #include <QTextDocument>
 #include <QTextCursor>
 #include <QTextBlock>
@@ -34,8 +9,12 @@
 #include <QTextTable>
 #include <QBuffer>
 #include <QDebug>
+#include <QFontInfo>
+#include <QLoggingCategory>
 
 #include <private/qtextmarkdownwriter_p.h>
+
+Q_LOGGING_CATEGORY(lcTests, "qt.text.tests")
 
 // #define DEBUG_WRITE_OUTPUT
 
@@ -51,9 +30,11 @@ private slots:
     void testWriteParagraph();
     void testWriteList();
     void testWriteEmptyList();
+    void testWriteCheckboxListItemEndingWithCode();
     void testWriteNestedBulletLists_data();
     void testWriteNestedBulletLists();
     void testWriteNestedNumericLists();
+    void testWriteNumericListWithStart();
     void testWriteTable();
     void rewriteDocument_data();
     void rewriteDocument();
@@ -61,6 +42,8 @@ private slots:
     void fromHtml();
 
 private:
+    bool isMainFontFixed();
+    bool isFixedFontProportional();
     QString documentToUnixMarkdown();
 
 private:
@@ -77,10 +60,39 @@ void tst_QTextMarkdownWriter::cleanup()
     delete document;
 }
 
+bool tst_QTextMarkdownWriter::isMainFontFixed()
+{
+    bool ret = QFontInfo(QGuiApplication::font()).fixedPitch();
+    if (ret) {
+        qCWarning(lcTests) << "QFontDatabase::GeneralFont is monospaced: markdown writing is likely to use too many backticks"
+                           << QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    }
+    return ret;
+}
+
+bool tst_QTextMarkdownWriter::isFixedFontProportional()
+{
+    bool ret = !QFontInfo(QFontDatabase::systemFont(QFontDatabase::FixedFont)).fixedPitch();
+    if (ret) {
+        qCWarning(lcTests) << "QFontDatabase::FixedFont is NOT monospaced: markdown writing is likely to use too few backticks"
+                           << QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    }
+    return ret;
+}
+
+QString tst_QTextMarkdownWriter::documentToUnixMarkdown()
+{
+    QString ret;
+    QTextStream ts(&ret, QIODevice::WriteOnly);
+    QTextMarkdownWriter writer(ts, QTextDocument::MarkdownDialectGitHub);
+    writer.writeAll(document);
+    return ret;
+}
+
 void tst_QTextMarkdownWriter::testWriteParagraph_data()
 {
     QTest::addColumn<QString>("input");
-    QTest::addColumn<QString>("output");
+    QTest::addColumn<QString>("expectedOutput");
 
     QTest::newRow("empty") << "" <<
         "";
@@ -103,12 +115,15 @@ void tst_QTextMarkdownWriter::testWriteParagraph_data()
 void tst_QTextMarkdownWriter::testWriteParagraph()
 {
     QFETCH(QString, input);
-    QFETCH(QString, output);
+    QFETCH(QString, expectedOutput);
 
     QTextCursor cursor(document);
     cursor.insertText(input);
 
-    QCOMPARE(documentToUnixMarkdown(), output);
+    const QString output = documentToUnixMarkdown();
+    if (output != expectedOutput && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
+    QCOMPARE(output, expectedOutput);
 }
 
 void tst_QTextMarkdownWriter::testWriteList()
@@ -121,8 +136,11 @@ void tst_QTextMarkdownWriter::testWriteList()
     cursor.insertText("ListItem 2");
     list->add(cursor.block());
 
-    QCOMPARE(documentToUnixMarkdown(), QString::fromLatin1(
-        "- ListItem 1\n- ListItem 2\n"));
+    const QString output = documentToUnixMarkdown();
+    const QString expected = QString::fromLatin1("- ListItem 1\n- ListItem 2\n");
+    if (output != expected && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
+    QCOMPARE(output, expected);
 }
 
 void tst_QTextMarkdownWriter::testWriteEmptyList()
@@ -131,6 +149,38 @@ void tst_QTextMarkdownWriter::testWriteEmptyList()
     cursor.createList(QTextListFormat::ListDisc);
 
     QCOMPARE(documentToUnixMarkdown(), QString::fromLatin1("- \n"));
+}
+
+void tst_QTextMarkdownWriter::testWriteCheckboxListItemEndingWithCode()
+{
+    QTextCursor cursor(document);
+    QTextList *list = cursor.createList(QTextListFormat::ListDisc);
+    cursor.insertText("Image.originalSize property (not necessary; PdfDocument.pagePointSize() substitutes)");
+    list->add(cursor.block());
+    {
+        auto fmt = cursor.block().blockFormat();
+        fmt.setMarker(QTextBlockFormat::MarkerType::Unchecked);
+        cursor.setBlockFormat(fmt);
+    }
+    cursor.movePosition(QTextCursor::PreviousWord, QTextCursor::MoveAnchor, 2);
+    cursor.movePosition(QTextCursor::Left, QTextCursor::MoveAnchor);
+    cursor.movePosition(QTextCursor::PreviousWord, QTextCursor::KeepAnchor, 4);
+    QCOMPARE(cursor.selectedText(), QString::fromLatin1("PdfDocument.pagePointSize()"));
+    auto fmt = cursor.charFormat();
+    fmt.setFontFixedPitch(true);
+    cursor.setCharFormat(fmt);
+    cursor.movePosition(QTextCursor::PreviousWord, QTextCursor::MoveAnchor, 5);
+    cursor.movePosition(QTextCursor::Left, QTextCursor::MoveAnchor);
+    cursor.movePosition(QTextCursor::PreviousWord, QTextCursor::KeepAnchor, 4);
+    QCOMPARE(cursor.selectedText(), QString::fromLatin1("Image.originalSize"));
+    cursor.setCharFormat(fmt);
+
+    const QString output = documentToUnixMarkdown();
+    const QString expected = QString::fromLatin1(
+                "- [ ] `Image.originalSize` property (not necessary; `PdfDocument.pagePointSize()`\n  substitutes)\n");
+    if (output != expected && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
+    QCOMPARE(output, expected);
 }
 
 void tst_QTextMarkdownWriter::testWriteNestedBulletLists_data()
@@ -212,7 +262,7 @@ void tst_QTextMarkdownWriter::testWriteNestedBulletLists()
         cursor.insertText("continuation");
     }
 
-    QString output = documentToUnixMarkdown();
+    const QString output = documentToUnixMarkdown();
 #ifdef DEBUG_WRITE_OUTPUT
     {
         QFile out("/tmp/" + QLatin1String(QTest::currentDataTag()) + ".md");
@@ -221,7 +271,9 @@ void tst_QTextMarkdownWriter::testWriteNestedBulletLists()
         out.close();
     }
 #endif
-    QCOMPARE(documentToUnixMarkdown(), expectedOutput);
+    if (output != expectedOutput && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
+    QCOMPARE(output, expectedOutput);
 }
 
 void tst_QTextMarkdownWriter::testWriteNestedNumericLists()
@@ -233,6 +285,7 @@ void tst_QTextMarkdownWriter::testWriteNestedNumericLists()
     list1->add(cursor.block());
 
     QTextListFormat fmt2;
+    // Alpha "numbering" is not supported in markdown, so we'll actually get decimal.
     fmt2.setStyle(QTextListFormat::ListLowerAlpha);
     fmt2.setNumberSuffix(QLatin1String(")"));
     fmt2.setIndent(2);
@@ -253,9 +306,116 @@ void tst_QTextMarkdownWriter::testWriteNestedNumericLists()
     cursor.insertText("ListItem 5");
     list2->add(cursor.block());
 
-    // There's no QTextList API to set the starting number so we hard-coded all lists to start at 1 (QTBUG-65384)
-    QCOMPARE(documentToUnixMarkdown(), QString::fromLatin1(
-                 "1.  ListItem 1\n    1)  ListItem 2\n        1.  ListItem 3\n2.  ListItem 4\n    2)  ListItem 5\n"));
+    const QString output = documentToUnixMarkdown();
+
+ #ifdef DEBUG_WRITE_OUTPUT
+    {
+        QFile out(QDir::temp().filePath(QLatin1String(QTest::currentTestFunction()) + ".md"));
+        out.open(QFile::WriteOnly);
+        out.write(output.toUtf8());
+        out.close();
+    }
+    {
+        QFile out(QDir::temp().filePath(QLatin1String(QTest::currentTestFunction()) + ".html"));
+        out.open(QFile::WriteOnly);
+        out.write(document->toHtml().toUtf8());
+        out.close();
+    }
+#endif
+
+    // While we can set the start index for a block, if list items intersect each other, they will
+    // still use the list numbering.
+    const QString expected = QString::fromLatin1(
+                "1.  ListItem 1\n    1)  ListItem 2\n        1.  ListItem 3\n2.  ListItem 4\n    2)  ListItem 5\n");
+    if (output != expected && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
+    QCOMPARE(output, expected);
+}
+
+void tst_QTextMarkdownWriter::testWriteNumericListWithStart()
+{
+    QTextCursor cursor(document);
+
+    // The first list will start at 2.
+    QTextListFormat fmt1;
+    fmt1.setStyle(QTextListFormat::ListDecimal);
+    fmt1.setStart(2);
+    QTextList *list1 = cursor.createList(fmt1);
+    cursor.insertText("ListItem 1");
+    list1->add(cursor.block());
+
+    // This list uses the default start (1) again.
+    QTextListFormat fmt2;
+    // Alpha "numbering" is not supported in markdown, so we'll actually get decimal.
+    fmt2.setStyle(QTextListFormat::ListLowerAlpha);
+    fmt2.setNumberSuffix(QLatin1String(")"));
+    fmt2.setIndent(2);
+    QTextList *list2 = cursor.insertList(fmt2);
+    cursor.insertText("ListItem 2");
+
+    // Negative list numbers are disallowed by most Markdown implementations. This list will start
+    // at 1 for that reason.
+    QTextListFormat fmt3;
+    fmt3.setStyle(QTextListFormat::ListDecimal);
+    fmt3.setIndent(3);
+    fmt3.setStart(-1);
+    cursor.insertList(fmt3);
+    cursor.insertText("ListItem 3");
+
+    // Continuing list1, so the second item will have the number 3.
+    cursor.insertBlock();
+    cursor.insertText("ListItem 4");
+    list1->add(cursor.block());
+
+    // This will look out of place: it's in a different position than its list would suggest.
+    // Generates invalid markdown numbering (OK for humans, but md4c will parse it differently than we "meant").
+    // TODO QTBUG-111707: the writer needs to add newlines, otherwise ListItem 5 becomes part of the text for ListItem 4.
+    cursor.insertBlock();
+    cursor.insertText("ListItem 5");
+    list2->add(cursor.block());
+
+    // 0 indexed lists are fine.
+    QTextListFormat fmt4;
+    fmt4.setStyle(QTextListFormat::ListDecimal);
+    fmt4.setStart(0);
+    QTextList *list4 = cursor.insertList(fmt4);
+    cursor.insertText("SecondList Item 0");
+    list4->add(cursor.block());
+
+    // Ensure list numbers are incremented properly.
+    cursor.insertBlock();
+    cursor.insertText("SecondList Item 1");
+    list4->add(cursor.block());
+
+    const QString output = documentToUnixMarkdown();
+    const QString expected = QString::fromLatin1(
+            R"(2.  ListItem 1
+    1)  ListItem 2
+        1.  ListItem 3
+3.  ListItem 4
+    2)  ListItem 5
+0.  SecondList Item 0
+1.  SecondList Item 1
+)");
+
+#ifdef DEBUG_WRITE_OUTPUT
+   {
+       QFile out(QDir::temp().filePath(QLatin1String(QTest::currentTestFunction()) + ".md"));
+       out.open(QFile::WriteOnly);
+       out.write(output.toUtf8());
+       out.close();
+   }
+   {
+       QFile out(QDir::temp().filePath(QLatin1String(QTest::currentTestFunction()) + ".html"));
+       out.open(QFile::WriteOnly);
+       out.write(document->toHtml().toUtf8());
+       out.close();
+   }
+#endif
+
+    if (output != expected && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
+    QCOMPARE(output, expected);
 }
 
 void tst_QTextMarkdownWriter::testWriteTable()
@@ -308,6 +468,8 @@ void tst_QTextMarkdownWriter::testWriteTable()
 
     QString expected = QString::fromLatin1(
         "\n|one   |two |three|\n|------|----|-----|\n|alice |bob |carl |\n|dennis|eric|fiona|\n|gina  |    |     |\n\n");
+    if (md != expected && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
     QCOMPARE(md, expected);
 
     // create table with merged cells
@@ -357,7 +519,10 @@ void tst_QTextMarkdownWriter::testWriteTable()
     }
 #endif
 
-    QCOMPARE(md, QString::fromLatin1("\n|a ||b|\n|-|-|-|\n|c|d ||\n|e|f| |\n\n"));
+    expected = QString::fromLatin1("\n|a ||b|\n|-|-|-|\n|c|d ||\n|e|f| |\n\n");
+    if (md != expected && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
+    QCOMPARE(md, expected);
 }
 
 void tst_QTextMarkdownWriter::rewriteDocument_data()
@@ -390,12 +555,14 @@ void tst_QTextMarkdownWriter::rewriteDocument()
     out.close();
 #endif
 
+    if (md != orig && isMainFontFixed())
+        QEXPECT_FAIL("", "fixed-pitch main font (QTBUG-103484)", Continue);
     QCOMPARE(md, orig);
 }
 
 void tst_QTextMarkdownWriter::fromHtml_data()
 {
-    QTest::addColumn<QString>("expectedInput");
+    QTest::addColumn<QString>("input");
     QTest::addColumn<QString>("expectedOutput");
 
     QTest::newRow("long URL") <<
@@ -432,22 +599,25 @@ void tst_QTextMarkdownWriter::fromHtml_data()
         "![foo](/url \"title\")\n\n";
     QTest::newRow("code") <<
         "<pre class=\"language-pseudocode\">\n#include \"foo.h\"\n\nblock {\n    statement();\n}\n\n</pre>" <<
-        "```pseudocode\n#include \"foo.h\"\n\nblock {\n    statement();\n}\n```\n\n";
+        "```pseudocode\n#include \"foo.h\"\n\nblock {\n    statement();\n}\n\n```\n\n";
     // TODO
 //    QTest::newRow("escaped number and paren after double newline") <<
 //        "<p>(The first sentence of this paragraph is a line, the next paragraph has a number</p>13) but that's not part of an ordered list" <<
 //        "(The first sentence of this paragraph is a line, the next paragraph has a number\n\n13\\) but that's not part of an ordered list\n\n";
-//    QTest::newRow("preformats with embedded backticks") <<
-//        "<pre>none `one` ``two``</pre><pre>```three``` ````four````</pre>plain" <<
-//        "``` none `one` ``two`` ```\n\n````` ```three``` ````four```` `````\n\nplain\n\n";
+    QTest::newRow("preformats with embedded backticks") <<
+        "<pre>none `one` ``two``</pre>plain<pre>```three``` ````four````</pre>plain" <<
+        "```\nnone `one` ``two``\n\n```\nplain\n\n```\n```three``` ````four````\n\n```\nplain\n\n";
+    QTest::newRow("list items with and without checkboxes") <<
+        "<ul><li>bullet</li><li class=\"unchecked\">unchecked item</li><li class=\"checked\">checked item</li></ul>" <<
+        "- bullet\n- [ ] unchecked item\n- [x] checked item\n";
 }
 
 void tst_QTextMarkdownWriter::fromHtml()
 {
-    QFETCH(QString, expectedInput);
+    QFETCH(QString, input);
     QFETCH(QString, expectedOutput);
 
-    document->setHtml(expectedInput);
+    document->setHtml(input);
     QString output = documentToUnixMarkdown();
 
 #ifdef DEBUG_WRITE_OUTPUT
@@ -459,16 +629,9 @@ void tst_QTextMarkdownWriter::fromHtml()
     }
 #endif
 
+    if (output != expectedOutput && (isMainFontFixed() || isFixedFontProportional()))
+        QEXPECT_FAIL("", "fixed main font or proportional fixed font (QTBUG-103484)", Continue);
     QCOMPARE(output, expectedOutput);
-}
-
-QString tst_QTextMarkdownWriter::documentToUnixMarkdown()
-{
-    QString ret;
-    QTextStream ts(&ret, QIODevice::WriteOnly);
-    QTextMarkdownWriter writer(ts, QTextDocument::MarkdownDialectGitHub);
-    writer.writeAll(document);
-    return ret;
 }
 
 QTEST_MAIN(tst_QTextMarkdownWriter)

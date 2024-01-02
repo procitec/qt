@@ -1,29 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2019 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the documentation of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:FDL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Free Documentation License Usage
-** Alternatively, this file may be used under the terms of the GNU Free
-** Documentation License version 1.3 as published by the Free Software
-** Foundation and appearing in the file included in the packaging of
-** this file. Please review the following information to ensure
-** the GNU Free Documentation License version 1.3 requirements
-** will be met: https://www.gnu.org/licenses/fdl-1.3.html.
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2019 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GFDL-1.3-no-invariants-only
 
 /*!
     \page stylesheet.html
@@ -109,22 +85,7 @@
     buttons and check boxes to make them stand out. Using this
     technique, you can also achieve minor customizations that would
     normally require subclassing several style classes, such as
-    specifying a \l{QStyle::styleHint()}{style hint}. The
-    \l{widgets/stylesheet}{Style Sheet} example depicted below defines
-    two distinctive style sheets that you can try out and modify at
-    will.
-
-    \table
-    \row \li \inlineimage stylesheet-pagefold.png
-    \row \li Pagefold theme running on Windows
-    \endtable
-
-    \table
-    \row \li \inlineimage stylesheet-coffee-cleanlooks.png
-         \li \inlineimage stylesheet-pagefold-mac.png
-    \row \li Coffee theme running on Ubuntu Linux
-         \li Pagefold theme running on \macos
-    \endtable
+    specifying a \l{QStyle::styleHint()}{style hint}.
 
     When a style sheet is active, the QStyle returned by QWidget::style()
     is a wrapper "style sheet" style, \e not the platform-specific style. The
@@ -537,7 +498,7 @@
     the QObject::className() returns <namespace>::<classname>. This conflicts
     with the syntax for \l{Sub-Controls}. To overcome this problem,
     when using the Type Selector for widgets inside namespaces, we must
-    replace the "::" with "--". For example,
+    replace the \c{::} with \c{--}. For example,
 
     \snippet code/doc_src_stylesheet.cpp 27
 
@@ -549,8 +510,8 @@
     For example,
     \snippet code/doc_src_stylesheet.qdoc 28
 
-    If the property references an enum declared with Q_ENUMS, you should
-    reference its constants by name, i.e., not their numeric value.
+    If the property references an enum declared with Q_ENUM, you should
+    reference its constants by name, not their numeric value.
 
     \note Use the qproperty syntax with care, as it modifies the
     widget that is being painted. Also, the qproperty syntax is evaluated only
@@ -756,6 +717,9 @@
            subcontrol. By default, the arrow is placed in the center of the
            contents rectangle of the drop-down subcontrol.
 
+           The color of the placeholder text can be set using the
+           \l{#placeholder-text-color-prop}{placeholder-text-color} property.
+
            See \l{Qt Style Sheets Examples#Customizing QComboBox}{Customizing QComboBox}
            for an example.
 
@@ -865,12 +829,15 @@
 
     \row
         \li QLineEdit \target qlineedit-widget
-        \li Support the \l{box model}.
+        \li Supports the \l{box model}.
 
            The color and background of the selected item is styled using
            \l{#selection-color-prop}{selection-color} and
            \l{#selection-background-color-prop}{selection-background-color}
            respectively.
+
+           The color of the placeholder text can be set using the
+           \l{#placeholder-text-color-prop}{placeholder-text-color} property.
 
            The password character can be styled using the
            \l{#lineedit-password-character-prop}{lineedit-password-character}
@@ -1033,7 +1000,7 @@
 
            The slider can be styled using the \l{#handle-sub}{::handle} subcontrol.
            Setting the \l{#min-width-prop}{min-width} or \l{#min-height-prop}{min-height}
-           provides size contraints for the slider depending on the orientation.
+           provides size constraints for the slider depending on the orientation.
 
            The \l{add-line-sub}{::add-line} subcontrol can be used to style the
            button to add a line. By default, the add-line subcontrol is placed in
@@ -1226,6 +1193,9 @@
            \l{#selection-background-color-prop}{selection-background-color}
            respectively.
 
+           The color of the placeholder text can be set using the
+           \l{#placeholder-text-color-prop}{placeholder-text-color} property.
+
            See \l{qabstractscrollarea-widget}{QAbsractScrollArea} to
            style scrollable backgrounds.
 
@@ -1371,6 +1341,13 @@
         \li Property
         \li Type
         \li Description
+
+    \row
+        \li \b{\c accent-color}
+        \li \l{#Brush}{Brush} \br
+        \li The property sets the \c Accent, which is used to emphasize
+           interactive UI elements.
+           If this property is not set, it defaults to the \c highlight color.
 
     \row
         \li \b{\c alternate-background-color} \target alternate-background-color-prop
@@ -1950,7 +1927,7 @@
 
         The only widget currently supporting this property is QPushButton.
 
-        \note It's the application's responsibilty to assign an icon to a
+        \note It's the application's responsibility to assign an icon to a
         button (using the QAbstractButton API), and not the style's. So be
         careful setting it unless your stylesheet is targeting a specific
         application.
@@ -2321,6 +2298,21 @@
         \li \c bool
         \li Whether the QTreeView paints alternating row colors for the empty
            area (i.e the area where there are no items)
+
+    \row
+        \li \b{\c placeholder-text-color*} \target placeholder-text-color-prop
+        \li \l{#Brush}{Brush} \br
+        \li The color used for the placeholder text of text editing widgets.
+
+           If this property is not set, the default value is whatever
+           is set for the palette's \l{QPalette::}{PlaceholderText}
+           role.
+
+           Example:
+
+           \snippet code/doc_src_stylesheet.qdoc 163
+
+           Available since 6.5.
 
     \row
         \li \b{\c position} \target position-prop
@@ -2724,6 +2716,10 @@
         \li QStyle::SP_DirHomeIcon
 
     \row
+        \li lineedit-clear-button-icon
+        \li QStyle::SP_LineEditClearButton
+
+    \row
         \li leftarrow-icon
         \li QStyle::SP_ArrowLeft
 
@@ -2923,7 +2919,7 @@
            | \tt{hsl(\e{h}, \e{s}, \e{l})} \br
            | \tt{hsla(\e{h}, \e{s}, \e{l}, \e{a})} \br
            | \tt{#\e{rrggbb}} \br
-           | \l{QColor::setNamedColor()}{Color Name} \br
+           | \l{QColor::fromString()}{Color Name} \br
         \li Specifies a color as RGB (red, green, blue), RGBA (red,
            green, blue, alpha), HSV (hue, saturation, value), HSVA
            (hue, saturation, value, alpha), HSL (hue, saturation,
@@ -3023,7 +3019,8 @@
            \list
            \li \c px: pixels
            \li \c pt: the size of one point (i.e., 1/72 of an inch)
-           \li \c em: the em width of the font (i.e., the width of 'M')
+           \li \c em: the size relative to the font size of the element
+                  (e.g., 2em means 2 times the size of the font)
            \li \c ex: the x-height of the font (i.e., the height of 'x')
            \endlist
 
@@ -3059,6 +3056,7 @@
     \row
         \li \b{PaletteRole} \target PaletteRole
         \li \c alternate-base \br
+              | \c accent \br
               | \c base \br
               | \c bright-text \br
               | \c button \br
@@ -3936,8 +3934,10 @@
     \image tabWidget-stylesheet2.png
 
     For a tab widget that looks like above, we make use of
-    \l{http://www.communitymx.com/content/article.cfm?cid=B0029}
-    {negative margins}. The resulting stylesheet looks like this:
+    \l{https://doc.qt.io/qt-5/stylesheet-customizing.html#the-box-model}
+    {negative margins}. Negative values draw the element closer to its
+    neighbors than it would be by default. The resulting stylesheet
+    looks like this:
 
     \snippet code/doc_src_stylesheet.qdoc 146
 
@@ -4058,7 +4058,7 @@
 
     \image stylesheet-treeview.png
 
-    \sa {Style Sheet Example}, {Supported HTML Subset}, QStyle
+    \sa {Supported HTML Subset}, QStyle
 
 
     \section1 Common Mistakes

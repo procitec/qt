@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the plugins of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 #include "qwaylandshmbackingstore_p.h"
 #include "qwaylandwindow_p.h"
 #include "qwaylandsubsurface_p.h"
@@ -52,6 +16,7 @@
 
 #include <QtWaylandClient/private/wayland-wayland-client-protocol.h>
 
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
 
@@ -61,6 +26,19 @@
 #  ifndef MFD_CLOEXEC
 #    define MFD_CLOEXEC     0x0001U
 #  endif
+#  ifndef MFD_ALLOW_SEALING
+#    define MFD_ALLOW_SEALING 0x0002U
+#  endif
+// from bits/fcntl-linux.h
+#  ifndef F_ADD_SEALS
+#    define F_ADD_SEALS 1033
+#  endif
+#  ifndef F_SEAL_SEAL
+#    define F_SEAL_SEAL 0x0001
+#  endif
+#  ifndef F_SEAL_SHRINK
+#    define F_SEAL_SHRINK 0x0002
+#  endif
 #endif
 
 QT_BEGIN_NAMESPACE
@@ -68,14 +46,16 @@ QT_BEGIN_NAMESPACE
 namespace QtWaylandClient {
 
 QWaylandShmBuffer::QWaylandShmBuffer(QWaylandDisplay *display,
-                     const QSize &size, QImage::Format format, int scale)
+                     const QSize &size, QImage::Format format, qreal scale)
 {
     int stride = size.width() * 4;
     int alloc = stride * size.height();
     int fd = -1;
 
 #ifdef SYS_memfd_create
-    fd = syscall(SYS_memfd_create, "wayland-shm", MFD_CLOEXEC);
+    fd = syscall(SYS_memfd_create, "wayland-shm", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (fd >= 0)
+        fcntl(fd, F_ADD_SEALS, F_SEAL_SHRINK | F_SEAL_SEAL);
 #endif
 
     QScopedPointer<QFile> filePointer;
@@ -108,7 +88,7 @@ QWaylandShmBuffer::QWaylandShmBuffer(QWaylandDisplay *display,
     QWaylandShm* shm = display->shm();
     wl_shm_format wl_format = shm->formatFrom(format);
     mImage = QImage(data, size.width(), size.height(), stride, format);
-    mImage.setDevicePixelRatio(qreal(scale));
+    mImage.setDevicePixelRatio(scale);
 
     mShmPool = wl_shm_create_pool(shm->object(), fd, alloc);
     init(wl_shm_pool_create_buffer(mShmPool,0, size.width(), size.height(),
@@ -126,7 +106,7 @@ QWaylandShmBuffer::~QWaylandShmBuffer(void)
 
 QImage *QWaylandShmBuffer::imageInsideMargins(const QMargins &marginsIn)
 {
-    QMargins margins = marginsIn * int(mImage.devicePixelRatio());
+    QMargins margins = marginsIn * mImage.devicePixelRatio();
 
     if (!margins.isNull() && margins != mMargins) {
         if (mMarginsImage) {
@@ -156,7 +136,18 @@ QWaylandShmBackingStore::QWaylandShmBackingStore(QWindow *window, QWaylandDispla
     : QPlatformBackingStore(window)
     , mDisplay(display)
 {
-
+    QObject::connect(mDisplay, &QWaylandDisplay::reconnected, window, [this]() {
+        auto copy = mBuffers;
+        // clear available buffers so we create new ones
+        // actual deletion is deferred till after resize call so we can copy
+        // contents from the back buffer
+        mBuffers.clear();
+        mFrontBuffer = nullptr;
+        // resize always resets mBackBuffer
+        if (mRequestedSize.isValid() && waylandWindow())
+            resize(mRequestedSize);
+        qDeleteAll(copy);
+    });
 }
 
 QWaylandShmBackingStore::~QWaylandShmBackingStore()
@@ -180,8 +171,6 @@ void QWaylandShmBackingStore::beginPaint(const QRegion &region)
     mPainting = true;
     ensureSize();
 
-    waylandWindow()->setCanResize(false);
-
     if (mBackBuffer->image()->hasAlphaChannel()) {
         QPainter p(paintDevice());
         p.setCompositionMode(QPainter::CompositionMode_Source);
@@ -196,7 +185,6 @@ void QWaylandShmBackingStore::endPaint()
     mPainting = false;
     if (mPendingFlush)
         flush(window(), mPendingRegion, QPoint());
-    waylandWindow()->setCanResize(true);
 }
 
 void QWaylandShmBackingStore::ensureSize()
@@ -271,7 +259,7 @@ QWaylandShmBuffer *QWaylandShmBackingStore::getBuffer(const QSize &size)
 void QWaylandShmBackingStore::resize(const QSize &size)
 {
     QMargins margins = windowDecorationMargins();
-    int scale = waylandWindow()->scale();
+    qreal scale = waylandWindow()->scale();
     QSize sizeWithMargins = (size + QSize(margins.left()+margins.right(),margins.top()+margins.bottom())) * scale;
 
     // We look for a free buffer to draw into. If the buffer is not the last buffer we used,

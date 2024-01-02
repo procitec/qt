@@ -1,43 +1,7 @@
-/****************************************************************************
-**
-** Copyright (C) 2020 The Qt Company Ltd.
-** Copyright (C) 2020 Intel Corporation.
-** Copyright (C) 2019 Klarälvdalens Datakonsult AB.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtCore module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2020 The Qt Company Ltd.
+// Copyright (C) 2020 Intel Corporation.
+// Copyright (C) 2019 Klarälvdalens Datakonsult AB.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qsharedpointer.h"
 
@@ -479,6 +443,46 @@
 */
 
 /*!
+    \fn template <class T> QSharedPointer<T>::QSharedPointer(QSharedPointer &&other)
+
+    Move-constructs a QSharedPointer instance, making it point at the same
+    object that \a other was pointing to.
+
+    \since 5.4
+*/
+
+/*!
+    \fn template <class T> QSharedPointer<T>::operator=(QSharedPointer &&other)
+
+    Move-assigns \a other to this QSharedPointer instance.
+
+    \since 5.0
+*/
+
+/*!
+    \fn template <class T> template <class X> QSharedPointer<T>::QSharedPointer(QSharedPointer<X> &&other)
+
+    Move-constructs a QSharedPointer instance, making it point at the same
+    object that \a other was pointing to.
+
+    This constructor participates in overload resolution only if \c{X*}
+    implicitly converts to \c{T*}.
+
+    \since 5.6
+*/
+
+/*!
+    \fn template <class T> template <class X> QSharedPointer<T>::operator=(QSharedPointer<X> &&other)
+
+    Move-assigns \a other to this QSharedPointer instance.
+
+    This assignment operator participates in overload resolution only if \c{X*}
+    implicitly converts to \c{T*}.
+
+    \since 5.6
+*/
+
+/*!
     \fn template <class T> QSharedPointer<T>::QSharedPointer(const QWeakPointer<T> &other)
 
     Creates a QSharedPointer by promoting the weak reference \a other
@@ -848,7 +852,7 @@
 /*!
     \fn template <class T> T *QWeakPointer<T>::data() const
     \since 4.6
-    \obsolete Use toStrongRef() instead, and data() on the returned QSharedPointer.
+    \deprecated Use toStrongRef() instead, and data() on the returned QSharedPointer.
 
     Returns the value of the pointer being tracked by this QWeakPointer,
     \b without ensuring that it cannot get deleted. To have that guarantee,
@@ -929,6 +933,15 @@
     \since 5.4
 
     Const overload of sharedFromThis().
+*/
+
+/*!
+    \fn template <class T> qHash(const QSharedPointer<T> &key, size_t seed)
+    \relates QSharedPointer
+
+    Returns the hash value for \a key, using \a seed to seed the calculation.
+
+    \since 5.0
 */
 
 /*!
@@ -1400,7 +1413,7 @@ QtSharedPointer::ExternalRefCountData *QtSharedPointer::ExternalRefCountData::ge
     }
 
     // we can create the refcount data because it doesn't exist
-    ExternalRefCountData *x = new ExternalRefCountData(Qt::Uninitialized);
+    ExternalRefCountData *x = ::new ExternalRefCountData(Qt::Uninitialized);
     x->strongref.storeRelaxed(-1);
     x->weakref.storeRelaxed(2);  // the QWeakPointer that called us plus the QObject itself
 
@@ -1411,7 +1424,7 @@ QtSharedPointer::ExternalRefCountData *QtSharedPointer::ExternalRefCountData::ge
         // ~ExternalRefCountData has a Q_ASSERT, so we use this trick to
         // only execute this if Q_ASSERTs are enabled
         Q_ASSERT((x->weakref.storeRelaxed(0), true));
-        delete x;
+        ::delete x;
         ret->weakref.ref();
     }
     return ret;
@@ -1424,7 +1437,7 @@ QtSharedPointer::ExternalRefCountData *QtSharedPointer::ExternalRefCountData::ge
 */
 QSharedPointer<QObject> QtSharedPointer::sharedPointerFromVariant_internal(const QVariant &variant)
 {
-    Q_ASSERT(QMetaType::typeFlags(variant.userType()) & QMetaType::SharedPointerToQObject);
+    Q_ASSERT(variant.metaType().flags() & QMetaType::SharedPointerToQObject);
     return *reinterpret_cast<const QSharedPointer<QObject>*>(variant.constData());
 }
 
@@ -1435,7 +1448,8 @@ QSharedPointer<QObject> QtSharedPointer::sharedPointerFromVariant_internal(const
 */
 QWeakPointer<QObject> QtSharedPointer::weakPointerFromVariant_internal(const QVariant &variant)
 {
-    Q_ASSERT(QMetaType::typeFlags(variant.userType()) & QMetaType::WeakPointerToQObject || QMetaType::typeFlags(variant.userType()) & QMetaType::TrackingPointerToQObject);
+    Q_ASSERT(variant.metaType().flags() & QMetaType::WeakPointerToQObject ||
+             variant.metaType().flags() & QMetaType::TrackingPointerToQObject);
     return *reinterpret_cast<const QWeakPointer<QObject>*>(variant.constData());
 }
 
@@ -1449,7 +1463,7 @@ QT_END_NAMESPACE
 #  ifdef QT_SHARED_POINTER_BACKTRACE_SUPPORT
 #    if defined(__GLIBC__) && (__GLIBC__ >= 2) && !defined(__UCLIBC__) && !defined(QT_LINUXBASE)
 #      define BACKTRACE_SUPPORTED
-#    elif defined(Q_OS_MAC)
+#    elif defined(Q_OS_DARWIN)
 #      define BACKTRACE_SUPPORTED
 #    endif
 #  endif
@@ -1574,7 +1588,7 @@ void QtSharedPointer::internalSafetyCheckAdd(const void *d_ptr, const volatile v
 
     //qDebug("Adding d=%p value=%p", d_ptr, ptr);
 
-    const void *other_d_ptr = kp->dataPointers.value(ptr, 0);
+    const void *other_d_ptr = kp->dataPointers.value(ptr, nullptr);
     if (Q_UNLIKELY(other_d_ptr)) {
 #  ifdef BACKTRACE_SUPPORTED
         printBacktrace(knownPointers()->dPointers.value(other_d_ptr).backtrace);
@@ -1637,7 +1651,7 @@ void QtSharedPointer::internalSafetyCheckCleanCheck()
         qFatal("Internal consistency error: the number of pointers is not equal!");
 
     if (Q_UNLIKELY(!kp->dPointers.isEmpty()))
-        qFatal("Pointer cleaning failed: %d entries remaining", kp->dPointers.size());
+        qFatal("Pointer cleaning failed: %d entries remaining", int(kp->dPointers.size()));
 #  endif
 }
 

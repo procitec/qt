@@ -1,9 +1,9 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2012 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef PPAPI_UTILITY_THREAD_SAFE_THREAD_TRAITS_H_
-#define PPAPI_UTILITY_THREAD_SAFE_THREAD_TRAITS_H_
+#ifndef PPAPI_UTILITY_COMPLETION_CALLBACK_FACTORY_THREAD_TRAITS_H_
+#define PPAPI_UTILITY_COMPLETION_CALLBACK_FACTORY_THREAD_TRAITS_H_
 
 #include <stdint.h>
 
@@ -38,10 +38,6 @@ namespace pp {
 /// As a further optimization, we can add support for this later.
 class ThreadSafeThreadTraits {
  public:
-
-  typedef pp::Lock Lock;
-  typedef pp::AutoLock AutoLock;
-
   class RefCount {
    public:
     /// Default constructor. In debug mode, this checks that the object is being
@@ -71,6 +67,8 @@ class ThreadSafeThreadTraits {
     int32_t ref_;
   };
 
+  typedef pp::Lock Lock;
+  typedef pp::AutoLock AutoLock;
 };
 
 /// The non-thread-safe version of thread traits. Using this class as the
@@ -179,4 +177,4 @@ class NonThreadSafeThreadTraits {
 
 }  // namespace pp
 
-#endif  // PPAPI_UTILITY_THREAD_SAFE_THREAD_TRAITS_H_
+#endif  // PPAPI_UTILITY_COMPLETION_CALLBACK_FACTORY_THREAD_TRAITS_H_

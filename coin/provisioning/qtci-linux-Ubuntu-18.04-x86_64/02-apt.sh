@@ -3,31 +3,37 @@
 #############################################################################
 ##
 ## Copyright (C) 2017 The Qt Company Ltd.
-## Contact: http://www.qt.io/licensing/
+## Contact: https://www.qt.io/licensing/
 ##
 ## This file is part of the provisioning scripts of the Qt Toolkit.
 ##
-## $QT_BEGIN_LICENSE:LGPL21$
+## $QT_BEGIN_LICENSE:LGPL$
 ## Commercial License Usage
 ## Licensees holding valid commercial Qt licenses may use this file in
 ## accordance with the commercial license agreement provided with the
 ## Software or, alternatively, in accordance with the terms contained in
 ## a written agreement between you and The Qt Company. For licensing terms
-## and conditions see http://www.qt.io/terms-conditions. For further
-## information use the contact form at http://www.qt.io/contact-us.
+## and conditions see https://www.qt.io/terms-conditions. For further
+## information use the contact form at https://www.qt.io/contact-us.
 ##
 ## GNU Lesser General Public License Usage
 ## Alternatively, this file may be used under the terms of the GNU Lesser
-## General Public License version 2.1 or version 3 as published by the Free
-## Software Foundation and appearing in the file LICENSE.LGPLv21 and
-## LICENSE.LGPLv3 included in the packaging of this file. Please review the
-## following information to ensure the GNU Lesser General Public License
-## requirements will be met: https://www.gnu.org/licenses/lgpl.html and
-## http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
+## General Public License version 3 as published by the Free Software
+## Foundation and appearing in the file LICENSE.LGPL3 included in the
+## packaging of this file. Please review the following information to
+## ensure the GNU Lesser General Public License version 3 requirements
+## will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
 ##
-## As a special exception, The Qt Company gives you certain additional
-## rights. These rights are described in The Qt Company LGPL Exception
-## version 1.1, included in the file LGPL_EXCEPTION.txt in this package.
+## GNU General Public License Usage
+## Alternatively, this file may be used under the terms of the GNU
+## General Public License version 2.0 or (at your option) the GNU General
+## Public license version 3 or any later version approved by the KDE Free
+## Qt Foundation. The licenses are as published by the Free Software
+## Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
+## included in the packaging of this file. Please review the following
+## information to ensure the GNU General Public License requirements will
+## be met: https://www.gnu.org/licenses/gpl-2.0.html and
+## https://www.gnu.org/licenses/gpl-3.0.html.
 ##
 ## $QT_END_LICENSE$
 ##
@@ -111,6 +117,12 @@ installPackages+=(libgstreamer1.0-dev)
 installPackages+=(libgstreamer-plugins-base1.0-dev)
 installPackages+=(libgstreamer-plugins-good1.0-dev)
 installPackages+=(libgstreamer-plugins-bad1.0-dev)
+installPackages+=(yasm)
+installPackages+=(libva-dev)
+# for QtMultimedia streaming tests
+installPackages+=(vlc-bin)
+installPackages+=(vlc-plugin-base)
+
 # Support for cross-building to x86 (needed by WebEngine boot2qt builds)
 installPackages+=(g++-multilib)
 # python3 development package
@@ -127,6 +139,7 @@ installPackages+=(libgl1-mesa-glx)
 installPackages+=(libgl1-mesa-dev)
 installPackages+=(libegl1-mesa-dev)
 installPackages+=(curl)
+installPackages+=(libcurl4-openssl-dev)
 installPackages+=(libicu-dev)
 installPackages+=(zlib1g-dev)
 installPackages+=(zlib1g)
@@ -137,7 +150,6 @@ installPackages+=(libssl-dev)
 installPackages+=(libxcursor-dev)
 installPackages+=(libxcomposite-dev)
 installPackages+=(libxdamage-dev)
-installPackages+=(libxkbfile-dev)
 installPackages+=(libxrandr-dev)
 installPackages+=(libfontconfig1-dev)
 installPackages+=(libxss-dev)
@@ -175,6 +187,12 @@ installPackages+=(gawk)
 installPackages+=(texinfo)
 # Needed for Poppler test in QtWebEngine
 installPackages+=(libpoppler-cpp-dev)
+# Needed for QtCore
+installPackages+=(libdouble-conversion-dev)
+installPackages+=(libpcre2-dev)
+# Needed for qtgampepad
+installPackages+=(libsdl2-2.0)
+installPackages+=(libsdl2-dev)
 # Needed for qtwebkit
 installPackages+=(ruby)
 installPackages+=(libxslt1-dev)
@@ -188,8 +206,6 @@ echo "Installing packages"
 waitLoop
 sudo DEBIAN_FRONTEND=noninteractive apt-get -q -y install "${installPackages[@]}"
 
-# Install all needed packages in a special wheel cache directory
-pip3 wheel --wheel-dir "$HOME/python3-wheels" -r "${BASH_SOURCE%/*}/../common/shared/requirements.txt"
+OpenSSLVersion="$(openssl version |cut -b 9-14)"
+echo "OpenSSL = $OpenSSLVersion" >> ~/versions.txt
 
-source "${BASH_SOURCE%/*}/../common/unix/SetEnvVar.sh"
-SetEnvVar "PYTHON3_WHEEL_CACHE" "$HOME/python3-wheels"

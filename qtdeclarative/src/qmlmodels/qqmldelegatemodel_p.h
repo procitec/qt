@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QQMLDATAMODEL_P_H
 #define QQMLDATAMODEL_P_H
@@ -76,17 +40,17 @@ class Q_QMLMODELS_PRIVATE_EXPORT QQmlDelegateModel : public QQmlInstanceModel, p
     Q_OBJECT
     Q_DECLARE_PRIVATE(QQmlDelegateModel)
 
-    Q_PROPERTY(QVariant model READ model WRITE setModel)
-    Q_PROPERTY(QQmlComponent *delegate READ delegate WRITE setDelegate NOTIFY delegateChanged)
-    Q_PROPERTY(QString filterOnGroup READ filterGroup WRITE setFilterGroup NOTIFY filterGroupChanged RESET resetFilterGroup)
-    Q_PROPERTY(QQmlDelegateModelGroup *items READ items CONSTANT) //TODO : worth renaming?
-    Q_PROPERTY(QQmlDelegateModelGroup *persistedItems READ persistedItems CONSTANT)
-    Q_PROPERTY(QQmlListProperty<QQmlDelegateModelGroup> groups READ groups CONSTANT)
-    Q_PROPERTY(QObject *parts READ parts CONSTANT)
-    Q_PROPERTY(QVariant rootIndex READ rootIndex WRITE setRootIndex NOTIFY rootIndexChanged)
+    Q_PROPERTY(QVariant model READ model WRITE setModel FINAL)
+    Q_PROPERTY(QQmlComponent *delegate READ delegate WRITE setDelegate NOTIFY delegateChanged FINAL)
+    Q_PROPERTY(QString filterOnGroup READ filterGroup WRITE setFilterGroup NOTIFY filterGroupChanged RESET resetFilterGroup FINAL)
+    Q_PROPERTY(QQmlDelegateModelGroup *items READ items CONSTANT FINAL) //TODO : worth renaming?
+    Q_PROPERTY(QQmlDelegateModelGroup *persistedItems READ persistedItems CONSTANT FINAL)
+    Q_PROPERTY(QQmlListProperty<QQmlDelegateModelGroup> groups READ groups CONSTANT FINAL)
+    Q_PROPERTY(QObject *parts READ parts CONSTANT FINAL)
+    Q_PROPERTY(QVariant rootIndex READ rootIndex WRITE setRootIndex NOTIFY rootIndexChanged FINAL)
     Q_CLASSINFO("DefaultProperty", "delegate")
     QML_NAMED_ELEMENT(DelegateModel)
-    QML_ADDED_IN_MINOR_VERSION(1)
+    QML_ADDED_IN_VERSION(2, 1)
     QML_ATTACHED(QQmlDelegateModelAttached)
     Q_INTERFACES(QQmlParserStatus)
 
@@ -150,8 +114,11 @@ private Q_SLOTS:
     void _q_itemsInserted(int index, int count);
     void _q_itemsRemoved(int index, int count);
     void _q_itemsMoved(int from, int to, int count);
-    void _q_modelReset();
+    void _q_modelAboutToBeReset();
     void _q_rowsInserted(const QModelIndex &,int,int);
+    void _q_columnsInserted(const QModelIndex &, int, int);
+    void _q_columnsRemoved(const QModelIndex &, int, int);
+    void _q_columnsMoved(const QModelIndex &, int, int, const QModelIndex &, int);
     void _q_rowsAboutToBeRemoved(const QModelIndex &parent, int begin, int end);
     void _q_rowsRemoved(const QModelIndex &,int,int);
     void _q_rowsMoved(const QModelIndex &, int, int, const QModelIndex &, int);
@@ -159,6 +126,7 @@ private Q_SLOTS:
     void _q_layoutChanged(const QList<QPersistentModelIndex>&, QAbstractItemModel::LayoutChangeHint);
 
 private:
+    void handleModelReset();
     bool isDescendantOf(const QPersistentModelIndex &desc, const QList<QPersistentModelIndex> &parents) const;
 
     Q_DISABLE_COPY(QQmlDelegateModel)
@@ -168,11 +136,11 @@ class QQmlDelegateModelGroupPrivate;
 class Q_QMLMODELS_PRIVATE_EXPORT QQmlDelegateModelGroup : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(int count READ count NOTIFY countChanged)
-    Q_PROPERTY(QString name READ name WRITE setName NOTIFY nameChanged)
-    Q_PROPERTY(bool includeByDefault READ defaultInclude WRITE setDefaultInclude NOTIFY defaultIncludeChanged)
+    Q_PROPERTY(int count READ count NOTIFY countChanged FINAL)
+    Q_PROPERTY(QString name READ name WRITE setName NOTIFY nameChanged FINAL)
+    Q_PROPERTY(bool includeByDefault READ defaultInclude WRITE setDefaultInclude NOTIFY defaultIncludeChanged FINAL)
     QML_NAMED_ELEMENT(DelegateModelGroup)
-    QML_ADDED_IN_MINOR_VERSION(1)
+    QML_ADDED_IN_VERSION(2, 1)
 public:
     QQmlDelegateModelGroup(QObject *parent = nullptr);
     QQmlDelegateModelGroup(const QString &name, QQmlDelegateModel *model, int compositorType, QObject *parent = nullptr);
@@ -212,9 +180,14 @@ class QQmlDelegateModelAttachedMetaObject;
 class QQmlDelegateModelAttached : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(QQmlDelegateModel *model READ model CONSTANT)
-    Q_PROPERTY(QStringList groups READ groups WRITE setGroups NOTIFY groupsChanged)
-    Q_PROPERTY(bool isUnresolved READ isUnresolved NOTIFY unresolvedChanged)
+    Q_PROPERTY(QQmlDelegateModel *model READ model CONSTANT FINAL)
+    Q_PROPERTY(QStringList groups READ groups WRITE setGroups NOTIFY groupsChanged FINAL)
+    Q_PROPERTY(bool isUnresolved READ isUnresolved NOTIFY unresolvedChanged FINAL)
+    Q_PROPERTY(bool inPersistedItems READ inPersistedItems WRITE setInPersistedItems NOTIFY groupsChanged FINAL)
+    Q_PROPERTY(bool inItems READ inItems WRITE setInItems NOTIFY groupsChanged FINAL)
+    Q_PROPERTY(int persistedItemsIndex READ persistedItemsIndex NOTIFY groupsChanged FINAL)
+    Q_PROPERTY(int itemsIndex READ itemsIndex NOTIFY groupsChanged FINAL)
+
 public:
     QQmlDelegateModelAttached(QObject *parent);
     QQmlDelegateModelAttached(QQmlDelegateModelItem *cacheItem, QObject *parent);
@@ -222,6 +195,14 @@ public:
 
     void resetCurrentIndex();
     void setCacheItem(QQmlDelegateModelItem *item);
+
+    void setInPersistedItems(bool inPersisted);
+    bool inPersistedItems() const;
+    int persistedItemsIndex() const;
+
+    void setInItems(bool inItems);
+    bool inItems() const;
+    int itemsIndex() const;
 
     QQmlDelegateModel *model() const;
 
@@ -237,6 +218,9 @@ public:
 Q_SIGNALS:
     void groupsChanged();
     void unresolvedChanged();
+
+private:
+    void setInGroup(QQmlListCompositor::Group group, bool inGroup);
 
 public:
     QQmlDelegateModelItem *m_cacheItem;

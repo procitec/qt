@@ -1,48 +1,13 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the plugins of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
-#include "qwaylandeglwindow.h"
+#include "qwaylandeglwindow_p.h"
 
 #include <QtWaylandClient/private/qwaylandscreen_p.h>
-#include "qwaylandglcontext.h"
+#include <QtWaylandClient/private/qwaylandsurface_p.h>
+#include "qwaylandglcontext_p.h"
 
-#include <QtEglSupport/private/qeglconvenience_p.h>
+#include <QtGui/private/qeglconvenience_p.h>
 
 #include <QDebug>
 #include <QtGui/QWindow>
@@ -57,17 +22,12 @@ namespace QtWaylandClient {
 QWaylandEglWindow::QWaylandEglWindow(QWindow *window, QWaylandDisplay *display)
     : QWaylandWindow(window, display)
     , m_clientBufferIntegration(static_cast<QWaylandEglClientBufferIntegration *>(mDisplay->clientBufferIntegration()))
+    , m_format(window->requestedFormat())
 {
-    QSurfaceFormat fmt = window->requestedFormat();
-    if (mDisplay->supportsWindowDecoration())
-        fmt.setAlphaBufferSize(8);
-    m_eglConfig = q_configFromGLFormat(m_clientBufferIntegration->eglDisplay(), fmt);
-    m_format = q_glFormatFromConfig(m_clientBufferIntegration->eglDisplay(), m_eglConfig, fmt);
-
-    // Do not create anything from here. This platform window may belong to a
-    // RasterGLSurface window which may have pure raster content.  In this case, where the
-    // window is never actually made current, creating a wl_egl_window and EGL surface
-    // should be avoided.
+    connect(display, &QWaylandDisplay::reconnected, this, [this] {
+        m_clientBufferIntegration = static_cast<QWaylandEglClientBufferIntegration *>(
+                mDisplay->clientBufferIntegration());
+    });
 }
 
 QWaylandEglWindow::~QWaylandEglWindow()
@@ -105,7 +65,7 @@ void QWaylandEglWindow::setGeometry(const QRect &rect)
 
 void QWaylandEglWindow::updateSurface(bool create)
 {
-    QMargins margins = frameMargins();
+    QMargins margins = mWindowDecoration ? frameMargins() : QMargins{};
     QRect rect = geometry();
     QSize sizeWithMargins = (rect.size() + QSize(margins.left() + margins.right(), margins.top() + margins.bottom())) * scale();
 
@@ -124,6 +84,7 @@ void QWaylandEglWindow::updateSurface(bool create)
         }
         mOffset = QPoint();
     } else {
+        QReadLocker locker(&mSurfaceLock);
         if (m_waylandEglWindow) {
             int current_width, current_height;
             static bool disableResizeCheck = qgetenv("QT_WAYLAND_DISABLE_RESIZECHECK").toInt();
@@ -131,19 +92,26 @@ void QWaylandEglWindow::updateSurface(bool create)
             if (!disableResizeCheck) {
                 wl_egl_window_get_attached_size(m_waylandEglWindow, &current_width, &current_height);
             }
-            if (disableResizeCheck || (current_width != sizeWithMargins.width() || current_height != sizeWithMargins.height())) {
+            if (disableResizeCheck || (current_width != sizeWithMargins.width() || current_height != sizeWithMargins.height()) || m_requestedSize != sizeWithMargins) {
                 wl_egl_window_resize(m_waylandEglWindow, sizeWithMargins.width(), sizeWithMargins.height(), mOffset.x(), mOffset.y());
+                m_requestedSize = sizeWithMargins;
                 mOffset = QPoint();
 
                 m_resize = true;
             }
-        } else if (create && wlSurface()) {
-            m_waylandEglWindow = wl_egl_window_create(wlSurface(), sizeWithMargins.width(), sizeWithMargins.height());
+        } else if (create && mSurface) {
+            m_waylandEglWindow = wl_egl_window_create(mSurface->object(), sizeWithMargins.width(), sizeWithMargins.height());
+            m_requestedSize = sizeWithMargins;
         }
 
         if (!m_eglSurface && m_waylandEglWindow && create) {
             EGLNativeWindowType eglw = (EGLNativeWindowType) m_waylandEglWindow;
-            m_eglSurface = eglCreateWindowSurface(m_clientBufferIntegration->eglDisplay(), m_eglConfig, eglw, 0);
+            QSurfaceFormat fmt = window()->requestedFormat();
+            if (mDisplay->supportsWindowDecoration())
+                fmt.setAlphaBufferSize(8);
+            EGLConfig eglConfig = q_configFromGLFormat(m_clientBufferIntegration->eglDisplay(), fmt);
+            m_format = q_glFormatFromConfig(m_clientBufferIntegration->eglDisplay(), eglConfig);
+            m_eglSurface = eglCreateWindowSurface(m_clientBufferIntegration->eglDisplay(), eglConfig, eglw, 0);
             if (Q_UNLIKELY(m_eglSurface == EGL_NO_SURFACE))
                 qCWarning(lcQpaWayland, "Could not create EGL surface (EGL error 0x%x)\n", eglGetError());
         }
@@ -172,6 +140,8 @@ void QWaylandEglWindow::invalidateSurface()
         wl_egl_window_destroy(m_waylandEglWindow);
         m_waylandEglWindow = nullptr;
     }
+    delete m_contentFBO;
+    m_contentFBO = nullptr;
 }
 
 EGLSurface QWaylandEglWindow::eglSurface() const
@@ -212,3 +182,5 @@ void QWaylandEglWindow::bindContentFBO()
 }
 
 QT_END_NAMESPACE
+
+#include "moc_qwaylandeglwindow_p.cpp"

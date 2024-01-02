@@ -1,42 +1,6 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Copyright (C) 2015 Klaralvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author David Faure <david.faure@kdab.com>
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtCore module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// Copyright (C) 2015 Klaralvdalens Datakonsult AB, a KDAB Group company, info@kdab.com, author David Faure <david.faure@kdab.com>
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #ifndef QMIMEPROVIDER_P_H
 #define QMIMEPROVIDER_P_H
@@ -59,6 +23,7 @@ QT_REQUIRE_CONFIG(mimetype);
 #include "qmimeglobpattern_p.h"
 #include <QtCore/qdatetime.h>
 #include <QtCore/qset.h>
+#include <QtCore/qmap.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -66,6 +31,8 @@ class QMimeMagicRuleMatcher;
 
 class QMimeProviderBase
 {
+    Q_DISABLE_COPY(QMimeProviderBase)
+
 public:
     QMimeProviderBase(QMimeDatabasePrivate *db, const QString &directory);
     virtual ~QMimeProviderBase() {}
@@ -79,20 +46,48 @@ public:
     virtual void addAliases(const QString &name, QStringList &result) = 0;
     virtual void findByMagic(const QByteArray &data, int *accuracyPtr, QMimeType &candidate) = 0;
     virtual void addAllMimeTypes(QList<QMimeType> &result) = 0;
+    virtual bool loadMimeTypePrivate(QMimeTypePrivate &) { return false; }
     virtual void loadIcon(QMimeTypePrivate &) {}
     virtual void loadGenericIcon(QMimeTypePrivate &) {}
     virtual void ensureLoaded() {}
+    virtual void excludeMimeTypeGlobs(const QStringList &) {}
 
     QString directory() const { return m_directory; }
 
     QMimeDatabasePrivate *m_db;
     QString m_directory;
+
+    /*
+        MimeTypes with "glob-deleteall" tags are handled differently by each provider
+        sub-class:
+        - QMimeBinaryProvider parses glob-deleteall tags lazily, i.e. only when loadMimeTypePrivate()
+          is called, and clears the glob patterns associated with mimetypes that have this tag
+        - QMimeXMLProvider parses glob-deleteall from the the start, i.e. when a XML file is
+          parsed with QMimeTypeParser
+
+        The two lists below are used to let both provider types (XML and Binary) communicate
+        about mimetypes with glob-deleteall.
+    */
+    /*
+        List of mimetypes in _this_ Provider that have a "glob-deleteall" tag,
+        glob patterns for those mimetypes should be ignored in all _other_ lower
+        precedence Providers.
+    */
+    QStringList m_mimeTypesWithDeletedGlobs;
+
+    /*
+        List of mimetypes with glob patterns that are "overwritten" in _this_ Provider,
+        by a "glob-deleteall" tag in a mimetype definition in a _higher precedence_
+        Provider. With QMimeBinaryProvider, we can't change the data in the binary mmap'ed
+        file, hence the need for this list.
+    */
+    QStringList m_mimeTypesWithExcludedGlobs;
 };
 
 /*
    Parses the files 'mime.cache' and 'types' on demand
  */
-class QMimeBinaryProvider : public QMimeProviderBase
+class QMimeBinaryProvider final : public QMimeProviderBase
 {
 public:
     QMimeBinaryProvider(QMimeDatabasePrivate *db, const QString &directory);
@@ -107,31 +102,43 @@ public:
     void addAliases(const QString &name, QStringList &result) override;
     void findByMagic(const QByteArray &data, int *accuracyPtr, QMimeType &candidate) override;
     void addAllMimeTypes(QList<QMimeType> &result) override;
-    static void loadMimeTypePrivate(QMimeTypePrivate &);
+    bool loadMimeTypePrivate(QMimeTypePrivate &) override;
     void loadIcon(QMimeTypePrivate &) override;
     void loadGenericIcon(QMimeTypePrivate &) override;
     void ensureLoaded() override;
+    void excludeMimeTypeGlobs(const QStringList &toExclude) override;
 
 private:
     struct CacheFile;
 
-    void matchGlobList(QMimeGlobMatchResult &result, CacheFile *cacheFile, int offset, const QString &fileName);
-    bool matchSuffixTree(QMimeGlobMatchResult &result, CacheFile *cacheFile, int numEntries, int firstOffset, const QString &fileName, int charPos, bool caseSensitiveCheck);
+    int matchGlobList(QMimeGlobMatchResult &result, CacheFile *cacheFile, int offset,
+                      const QString &fileName);
+    bool matchSuffixTree(QMimeGlobMatchResult &result, CacheFile *cacheFile, int numEntries,
+                         int firstOffset, const QString &fileName, qsizetype charPos,
+                         bool caseSensitiveCheck);
     bool matchMagicRule(CacheFile *cacheFile, int numMatchlets, int firstOffset, const QByteArray &data);
-    QLatin1String iconForMime(CacheFile *cacheFile, int posListOffset, const QByteArray &inputMime);
+    bool isMimeTypeGlobsExcluded(const char *name);
+    QLatin1StringView iconForMime(CacheFile *cacheFile, int posListOffset, const QByteArray &inputMime);
     void loadMimeTypeList();
     bool checkCacheChanged();
 
-    CacheFile *m_cacheFile = nullptr;
+    std::unique_ptr<CacheFile> m_cacheFile;
     QStringList m_cacheFileNames;
     QSet<QString> m_mimetypeNames;
     bool m_mimetypeListLoaded;
+    struct MimeTypeExtra
+    {
+        // Both retrieved on demand in loadMimeTypePrivate
+        QHash<QString, QString> localeComments;
+        QStringList globPatterns;
+    };
+    QMap<QString, MimeTypeExtra> m_mimetypeExtra;
 };
 
 /*
    Parses the raw XML files (slower)
  */
-class QMimeXMLProvider : public QMimeProviderBase
+class QMimeXMLProvider final : public QMimeProviderBase
 {
 public:
     enum InternalDatabaseEnum { InternalDatabase };
@@ -159,6 +166,7 @@ public:
 
     // Called by the mimetype xml parser
     void addMimeType(const QMimeType &mt);
+    void excludeMimeTypeGlobs(const QStringList &toExclude) override;
     void addGlobPattern(const QMimeGlobPattern &glob);
     void addParent(const QString &child, const QString &parent);
     void addAlias(const QString &alias, const QString &name);

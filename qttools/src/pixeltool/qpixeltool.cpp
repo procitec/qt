@@ -1,35 +1,9 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the tools applications of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:GPL-EXCEPT$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 3 as published by the Free Software
-** Foundation with exceptions as appearing in the file LICENSE.GPL3-EXCEPT
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only WITH Qt-GPL-exception-1.0
 
 #include "qpixeltool.h"
 
 #include <qapplication.h>
-#include <qdesktopwidget.h>
 #include <qdir.h>
 #include <qapplication.h>
 #include <qscreen.h>
@@ -53,6 +27,8 @@
 #include <qdebug.h>
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 static QPoint initialPos(const QSettings &settings, const QSize &initialSize)
 {
@@ -109,9 +85,11 @@ void QPixelTool::timerEvent(QTimerEvent *event)
         grabScreen();
     } else if (event->timerId() == m_displayZoomId) {
         killTimer(m_displayZoomId);
+        m_displayZoomId = 0;
         setZoomVisible(false);
     } else if (event->timerId() == m_displayGridSizeId) {
         killTimer(m_displayGridSizeId);
+        m_displayGridSizeId = 0;
         m_displayGridSize = false;
     }
 }
@@ -230,8 +208,7 @@ void QPixelTool::paintEvent(QPaintEvent *)
         }
     }
 
-    QFont f(QLatin1String("courier"));
-    f.setBold(true);
+    QFont f(QStringList{u"courier"_s}, -1, QFont::Bold);
     p.setFont(f);
 
     if (m_displayZoom) {
@@ -349,8 +326,9 @@ void QPixelTool::mouseMoveEvent(QMouseEvent *e)
     if (m_mouseDown)
         m_dragCurrent = e->pos();
 
-    int x = e->x() / m_zoom;
-    int y = e->y() / m_zoom;
+    const auto pos = e->position().toPoint();
+    const int x = pos.x() / m_zoom;
+    const int y = pos.y() / m_zoom;
 
     QImage im = m_buffer.toImage().convertToFormat(QImage::Format_ARGB32);
     if (x < im.width() && y < im.height() && x >= 0 && y >= 0) {
@@ -411,10 +389,10 @@ void QPixelTool::contextMenuEvent(QContextMenuEvent *e)
     menu.addSeparator();
 
     // Grid size options
-    menu.addAction(QLatin1String("Increase grid size"),
-                   this, &QPixelTool::increaseGridSize, Qt::Key_PageUp);
-    menu.addAction(QLatin1String("Decrease grid size"),
-                   this, &QPixelTool::decreaseGridSize, Qt::Key_PageDown);
+    menu.addAction(QLatin1String("Increase grid size"), Qt::Key_PageUp,
+                   this, &QPixelTool::increaseGridSize);
+    menu.addAction(QLatin1String("Decrease grid size"), Qt::Key_PageDown,
+                   this, &QPixelTool::decreaseGridSize);
     menu.addSeparator();
 
     QActionGroup *lcdGroup = new QActionGroup(&menu);
@@ -431,10 +409,10 @@ void QPixelTool::contextMenuEvent(QContextMenuEvent *e)
     menu.addSeparator();
 
     // Zoom options
-    menu.addAction(QLatin1String("Zoom in"),
-                   this, &QPixelTool::increaseZoom, Qt::Key_Plus);
-    menu.addAction(QLatin1String("Zoom out"),
-                   this, &QPixelTool::decreaseZoom, Qt::Key_Minus);
+    menu.addAction(QLatin1String("Zoom in"), Qt::Key_Plus,
+                   this, &QPixelTool::increaseZoom);
+    menu.addAction(QLatin1String("Zoom out"), Qt::Key_Minus,
+                   this, &QPixelTool::decreaseZoom);
     menu.addSeparator();
 
     // Freeze / Autoupdate
@@ -445,13 +423,13 @@ void QPixelTool::contextMenuEvent(QContextMenuEvent *e)
     menu.addSeparator();
 
     // Copy to clipboard / save
-    menu.addAction(QLatin1String("Save as image..."),
-                   this, &QPixelTool::saveToFile, QKeySequence::SaveAs);
+    menu.addAction(QLatin1String("Save as image..."), QKeySequence::SaveAs,
+                   this, &QPixelTool::saveToFile);
 #if QT_CONFIG(clipboard)
-    menu.addAction(QLatin1String("Copy to clipboard"),
-                   this, &QPixelTool::copyToClipboard, QKeySequence::Copy);
-    menu.addAction(QLatin1String("Copy color value to clipboard"),
-                   this, &QPixelTool::copyColorToClipboard, Qt::Key_C);
+    menu.addAction(QLatin1String("Copy to clipboard"), QKeySequence::Copy,
+                   this, &QPixelTool::copyToClipboard);
+    menu.addAction(QLatin1String("Copy color value to clipboard"), Qt::Key_C,
+                   this, &QPixelTool::copyColorToClipboard);
 #endif // QT_CONFIG(clipboard)
 
     menu.addSeparator();
@@ -534,9 +512,8 @@ void QPixelTool::grabScreen()
     int y = mousePos.y() - h/2;
 
     const QBrush darkBrush = palette().color(QPalette::Dark);
-    const QDesktopWidget *desktopWidget = QApplication::desktop();
     if (QScreen *screen = this->screen()) {
-        m_buffer = screen->grabWindow(desktopWidget->winId(), x, y, w, h);
+        m_buffer = screen->grabWindow(0, x, y, w, h);
     } else {
         m_buffer = QPixmap(w, h);
         m_buffer.fill(darkBrush.color());
@@ -564,9 +541,8 @@ void QPixelTool::grabScreen()
 
 void QPixelTool::startZoomVisibleTimer()
 {
-    if (m_displayZoomId > 0) {
+    if (m_displayZoomId > 0)
         killTimer(m_displayZoomId);
-    }
     m_displayZoomId = startTimer(5000);
     setZoomVisible(true);
 }
@@ -701,11 +677,11 @@ QString QPixelTool::aboutText() const
 
     QString result;
     QTextStream str(&result);
-    str << "<html></head><body><h2>Qt Pixeltool</h2><p>Qt " << QT_VERSION_STR
+    str << "<html><head></head><body><h2>Qt Pixeltool</h2><p>Qt " << QT_VERSION_STR
         << "</p><p>Copyright (C) 2017 The Qt Company Ltd.</p><h3>Screens</h3><ul>";
     for (const QScreen *screen : screens)
         str << "<li>" << (screen == windowScreen ? "* " : "  ") << screen << "</li>";
-    str << "<ul></body></html>";
+    str << "</ul></body></html>";
     return result;
 }
 

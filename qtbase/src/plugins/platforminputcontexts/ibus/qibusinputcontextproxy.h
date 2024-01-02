@@ -11,14 +11,16 @@
 #ifndef QIBUSINPUTCONTEXTPROXY_H_1394889529
 #define QIBUSINPUTCONTEXTPROXY_H_1394889529
 
-#include <QtCore/QObject>
-#include <QtCore/QByteArray>
-#include <QtCore/QList>
-#include <QtCore/QMap>
-#include <QtCore/QString>
-#include <QtCore/QStringList>
-#include <QtCore/QVariant>
-#include <QtDBus/QtDBus>
+#include <QObject>
+#include <QByteArray>
+#include <QList>
+#include <QMap>
+#include <QString>
+#include <QStringList>
+#include <QVariant>
+#include <QDBusAbstractInterface>
+#include <QDBusPendingReply>
+
 
 /*
  * Proxy class for interface org.freedesktop.IBus.InputContext
@@ -110,6 +112,13 @@ public Q_SLOTS: // METHODS
         QList<QVariant> argumentList;
         argumentList << QVariant::fromValue(x) << QVariant::fromValue(y) << QVariant::fromValue(w) << QVariant::fromValue(h);
         return asyncCallWithArgumentList(QLatin1String("SetCursorLocation"), argumentList);
+    }
+
+    inline QDBusPendingReply<> SetCursorLocationRelative(int x, int y, int w, int h)
+    {
+        QList<QVariant> argumentList;
+        argumentList << QVariant::fromValue(x) << QVariant::fromValue(y) << QVariant::fromValue(w) << QVariant::fromValue(h);
+        return asyncCallWithArgumentList(QLatin1String("SetCursorLocationRelative"), argumentList);
     }
 
     inline QDBusPendingReply<> SetEngine(const QString &name)

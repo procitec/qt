@@ -1,41 +1,5 @@
-/****************************************************************************
-**
-** Copyright (C) 2016 The Qt Company Ltd.
-** Contact: https://www.qt.io/licensing/
-**
-** This file is part of the QtQml module of the Qt Toolkit.
-**
-** $QT_BEGIN_LICENSE:LGPL$
-** Commercial License Usage
-** Licensees holding valid commercial Qt licenses may use this file in
-** accordance with the commercial license agreement provided with the
-** Software or, alternatively, in accordance with the terms contained in
-** a written agreement between you and The Qt Company. For licensing terms
-** and conditions see https://www.qt.io/terms-conditions. For further
-** information use the contact form at https://www.qt.io/contact-us.
-**
-** GNU Lesser General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU Lesser
-** General Public License version 3 as published by the Free Software
-** Foundation and appearing in the file LICENSE.LGPL3 included in the
-** packaging of this file. Please review the following information to
-** ensure the GNU Lesser General Public License version 3 requirements
-** will be met: https://www.gnu.org/licenses/lgpl-3.0.html.
-**
-** GNU General Public License Usage
-** Alternatively, this file may be used under the terms of the GNU
-** General Public License version 2.0 or (at your option) the GNU General
-** Public license version 3 or any later version approved by the KDE Free
-** Qt Foundation. The licenses are as published by the Free Software
-** Foundation and appearing in the file LICENSE.GPL2 and LICENSE.GPL3
-** included in the packaging of this file. Please review the following
-** information to ensure the GNU General Public License requirements will
-** be met: https://www.gnu.org/licenses/gpl-2.0.html and
-** https://www.gnu.org/licenses/gpl-3.0.html.
-**
-** $QT_END_LICENSE$
-**
-****************************************************************************/
+// Copyright (C) 2016 The Qt Company Ltd.
+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qqmlconnections_p.h"
 
@@ -60,15 +24,13 @@ Q_LOGGING_CATEGORY(lcQmlConnections, "qt.qml.connections")
 class QQmlConnectionsPrivate : public QObjectPrivate
 {
 public:
-    QQmlConnectionsPrivate() : target(nullptr), enabled(true), targetSet(false), ignoreUnknownSignals(false), componentcomplete(true) {}
-
     QList<QQmlBoundSignal*> boundsignals;
-    QObject *target;
+    QQmlGuard<QObject> target;
 
-    bool enabled;
-    bool targetSet;
-    bool ignoreUnknownSignals;
-    bool componentcomplete;
+    bool enabled = true;
+    bool targetSet = false;
+    bool ignoreUnknownSignals = false;
+    bool componentcomplete = true;
 
     QQmlRefPointer<QV4::ExecutableCompilationUnit> compilationUnit;
     QList<const QV4::CompiledData::Binding *> bindings;
@@ -88,7 +50,7 @@ public:
 
     \qml
     MouseArea {
-        onClicked: { foo(parameters) }
+        onClicked: (mouse)=> { foo(mouse) }
     }
     \endqml
 
@@ -130,6 +92,12 @@ public:
     }
     \endqml
 
+    \note For backwards compatibility you can also specify the signal handlers
+    without \c{function}, like you would specify them directly in the target
+    object. This is not recommended. If you specify one signal handler this way,
+    then all signal handlers specified as \c{function} in the same Connections
+    object are ignored.
+
     \sa {Qt QML}
 */
 QQmlConnections::QQmlConnections(QObject *parent) :
@@ -137,12 +105,8 @@ QQmlConnections::QQmlConnections(QObject *parent) :
 {
 }
 
-QQmlConnections::~QQmlConnections()
-{
-}
-
 /*!
-    \qmlproperty Object QtQml::Connections::target
+    \qmlproperty QtObject QtQml::Connections::target
     This property holds the object that sends the signal.
 
     If this property is not set, the \c target defaults to the parent of the Connection.
@@ -153,7 +117,7 @@ QQmlConnections::~QQmlConnections()
 QObject *QQmlConnections::target() const
 {
     Q_D(const QQmlConnections);
-    return d->targetSet ? d->target : parent();
+    return d->targetSet ? d->target.data() : parent();
 }
 
 class QQmlBoundSignalDeleter : public QObject
@@ -172,7 +136,7 @@ void QQmlConnections::setTarget(QObject *obj)
     if (d->targetSet && d->target == obj)
         return;
     d->targetSet = true; // even if setting to 0, it is *set*
-    for (QQmlBoundSignal *s : qAsConst(d->boundsignals)) {
+    for (QQmlBoundSignal *s : std::as_const(d->boundsignals)) {
         // It is possible that target is being changed due to one of our signal
         // handlers -> use deleteLater().
         if (s->isNotifying())
@@ -208,7 +172,7 @@ void QQmlConnections::setEnabled(bool enabled)
 
     d->enabled = enabled;
 
-    for (QQmlBoundSignal *s : qAsConst(d->boundsignals))
+    for (QQmlBoundSignal *s : std::as_const(d->boundsignals))
         s->setEnabled(d->enabled);
 
     emit enabledChanged();
@@ -237,27 +201,31 @@ void QQmlConnections::setIgnoreUnknownSignals(bool ignore)
 
 void QQmlConnectionsParser::verifyBindings(const QQmlRefPointer<QV4::ExecutableCompilationUnit> &compilationUnit, const QList<const QV4::CompiledData::Binding *> &props)
 {
-    for (int ii = 0; ii < props.count(); ++ii) {
+    for (int ii = 0; ii < props.size(); ++ii) {
         const QV4::CompiledData::Binding *binding = props.at(ii);
         const QString &propName = compilationUnit->stringAt(binding->propertyNameIndex);
 
-        const bool thirdCharacterIsValid = (propName.length() >= 2) && (propName.at(2).isUpper() || propName.at(2) == '_');
+        const bool thirdCharacterIsValid = (propName.size() >= 2)
+                && (propName.at(2).isUpper() || propName.at(2) == u'_');
         if (!propName.startsWith(QLatin1String("on")) || !thirdCharacterIsValid) {
             error(props.at(ii), QQmlConnections::tr("Cannot assign to non-existent property \"%1\"").arg(propName));
             return;
         }
 
-        if (binding->type >= QV4::CompiledData::Binding::Type_Object) {
+        if (binding->type() == QV4::CompiledData::Binding::Type_Script)
+            continue;
+
+        if (binding->type() >= QV4::CompiledData::Binding::Type_Object) {
             const QV4::CompiledData::Object *target = compilationUnit->objectAt(binding->value.objectIndex);
             if (!compilationUnit->stringAt(target->inheritedTypeNameIndex).isEmpty())
                 error(binding, QQmlConnections::tr("Connections: nested objects not allowed"));
             else
                 error(binding, QQmlConnections::tr("Connections: syntax error"));
             return;
-        } if (binding->type != QV4::CompiledData::Binding::Type_Script) {
-            error(binding, QQmlConnections::tr("Connections: script expected"));
-            return;
         }
+
+        error(binding, QQmlConnections::tr("Connections: script expected"));
+        return;
     }
 }
 
@@ -278,12 +246,10 @@ void QQmlConnections::connectSignals()
     if (d->bindings.isEmpty()) {
         connectSignalsToMethods();
     } else {
-#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
         if (lcQmlConnections().isWarningEnabled()) {
             qmlWarning(this) << tr("Implicitly defined onFoo properties in Connections are deprecated. "
                                     "Use this syntax instead: function onFoo(<arguments>) { ... }");
         }
-#endif
         connectSignalsToBindings();
     }
 }
@@ -297,15 +263,15 @@ void QQmlConnections::connectSignalsToMethods()
     if (!ddata)
         return;
 
-    QV4::ExecutionEngine *engine = ddata->context->engine->handle();
+    QV4::ExecutionEngine *engine = ddata->context->engine()->handle();
 
-    QQmlContextData *ctxtdata = ddata->outerContext;
+    QQmlRefPointer<QQmlContextData> ctxtdata = ddata->outerContext;
     for (int i = ddata->propertyCache->methodOffset(),
              end = ddata->propertyCache->methodOffset() + ddata->propertyCache->methodCount();
          i < end;
          ++i) {
 
-        QQmlPropertyData *handler = ddata->propertyCache->method(i);
+        const QQmlPropertyData *handler = ddata->propertyCache->method(i);
         if (!handler || !handler->isVMEFunction())
             continue;
 
@@ -334,7 +300,7 @@ void QQmlConnections::connectSignalsToMethods()
             signal->takeExpression(expression);
             d->boundsignals += signal;
         } else if (!d->ignoreUnknownSignals
-                   && propName.startsWith(QLatin1String("on")) && propName.length() > 2
+                   && propName.startsWith(QLatin1String("on")) && propName.size() > 2
                    && propName.at(2).isUpper()) {
             qmlWarning(this) << tr("Detected function \"%1\" in Connections element. "
                                    "This is probably intended to be a signal handler but no "
@@ -349,10 +315,10 @@ void QQmlConnections::connectSignalsToBindings()
     Q_D(QQmlConnections);
     QObject *target = this->target();
     QQmlData *ddata = QQmlData::get(this);
-    QQmlContextData *ctxtdata = ddata ? ddata->outerContext : nullptr;
+    QQmlRefPointer<QQmlContextData> ctxtdata = ddata ? ddata->outerContext : nullptr;
 
-    for (const QV4::CompiledData::Binding *binding : qAsConst(d->bindings)) {
-        Q_ASSERT(binding->type == QV4::CompiledData::Binding::Type_Script);
+    for (const QV4::CompiledData::Binding *binding : std::as_const(d->bindings)) {
+        Q_ASSERT(binding->type() == QV4::CompiledData::Binding::Type_Script);
         QString propName = d->compilationUnit->stringAt(binding->propertyNameIndex);
 
         QQmlProperty prop(target, propName);
