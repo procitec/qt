@@ -58,13 +58,6 @@ if(PkgConfig_FOUND)
     pkg_check_modules(LIBOPENJP2 libopenjp2)
 endif()
 
-if(Python3_EXECUTABLE)
-    execute_process(
-        COMMAND ${Python3_EXECUTABLE} -c "import html5lib"
-        RESULT_VARIABLE html5lib_NOT_FOUND
-        OUTPUT_QUIET
-    )
-endif()
 
 #### Tests
 if(LINUX)
@@ -516,11 +509,6 @@ add_check_for_support(
 )
 add_check_for_support(
    MODULES QtWebEngine QtPdf
-   CONDITION Python3_EXECUTABLE AND NOT html5lib_NOT_FOUND
-   MESSAGE "Python3 html5lib is missing."
-)
-add_check_for_support(
-   MODULES QtWebEngine QtPdf
    CONDITION GPerf_FOUND
    MESSAGE "Tool gperf is required."
 )
@@ -715,4 +703,3 @@ if(NOT FEATURE_webengine_opus_system AND NOT Perl_FOUND)
         MESSAGE "No perl found, compiling opus without some optimizations."
     )
 endif()
-
