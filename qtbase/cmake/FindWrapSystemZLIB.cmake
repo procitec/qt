@@ -10,7 +10,7 @@ endif()
 
 set(WrapSystemZLIB_FOUND OFF)
 
-find_package(ZLIB ${${CMAKE_FIND_PACKAGE_NAME}_FIND_VERSION})
+find_package(ZLIB ${${CMAKE_FIND_PACKAGE_NAME}_FIND_VERSION} GLOBAL)
 
 if(ZLIB_FOUND)
     set(WrapSystemZLIB_FOUND ON)
