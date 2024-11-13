@@ -64,13 +64,13 @@ if(PkgConfig_FOUND)
     pkg_check_modules(XKBFILE xkbfile)
 endif()
 
-if(Python3_EXECUTABLE)
-    execute_process(
-        COMMAND ${Python3_EXECUTABLE} -c "import html5lib"
-        RESULT_VARIABLE html5lib_NOT_FOUND
-        OUTPUT_QUIET
-    )
-endif()
+# if(Python3_EXECUTABLE)
+#     execute_process(
+#         COMMAND ${Python3_EXECUTABLE} -c "import html5lib"
+#         RESULT_VARIABLE html5lib_NOT_FOUND
+#         OUTPUT_QUIET
+#     )
+# endif()
 
 #### Tests
 if(LINUX)
@@ -513,11 +513,11 @@ add_check_for_support(
    CONDITION Python3_EXECUTABLE
    MESSAGE "Python version 3.8 or later is required."
 )
-add_check_for_support(
-   MODULES QtWebEngine QtPdf
-   CONDITION Python3_EXECUTABLE AND NOT html5lib_NOT_FOUND
-   MESSAGE "Python3 html5lib is missing."
-)
+# add_check_for_support(
+#    MODULES QtWebEngine QtPdf
+#    CONDITION Python3_EXECUTABLE AND NOT html5lib_NOT_FOUND
+#    MESSAGE "Python3 html5lib is missing."
+# )
 add_check_for_support(
    MODULES QtWebEngine QtPdf
    CONDITION GPerf_FOUND
@@ -735,4 +735,3 @@ if(NOT FEATURE_webengine_opus_system AND NOT Perl_FOUND)
         MESSAGE "No perl found, compiling opus without some optimizations."
     )
 endif()
-
