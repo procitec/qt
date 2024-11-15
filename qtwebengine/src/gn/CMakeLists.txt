@@ -60,6 +60,7 @@ add_custom_command(
     OUTPUT ${GN_EXECUTABLE}
     WORKING_DIRECTORY ${GN_BINARY_DIR}
     COMMAND ${Python3_EXECUTABLE} ${GN_SOURCE_DIR}/build/gen.py
+        --allow-warnings
         --no-last-commit-position
         --no-static-libstdc++
         --out-path ${GN_BINARY_DIR}/$<CONFIG>
