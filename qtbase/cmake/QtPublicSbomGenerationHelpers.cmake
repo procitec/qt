@@ -634,6 +634,10 @@ FileCopyrightText: NOASSERTION"
         set(install_prefix "${CMAKE_INSTALL_PREFIX}")
     endif()
 
+    if(install_prefix MATCHES "${CMAKE_INSTALL_PREFIX}(.*)")
+        set(install_prefix "\${CMAKE_INSTALL_PREFIX}${CMAKE_MATCH_1}")
+    endif()
+
     set(content "
         if(NOT EXISTS \$ENV{DESTDIR}${install_prefix}/${arg_FILENAME}
                 AND NOT QT_SBOM_BUILD_TIME AND NOT QT_SBOM_FAKE_CHECKSUM)
